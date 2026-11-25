@@ -8,43 +8,61 @@ import {
   Star,
   Send,
   ArrowRight,
-  Sparkles,
   Zap,
-  Filter
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import StarRating from '../components/StarRating';
 import StatusBadge from '../components/StatusBadge';
+import { KpiGridSkeleton, CardSkeleton } from '../components/SkeletonLoader';
+
+const DEFAULT_POSITIVE =
+  'Thank you for sharing your valuable feedback with Techzone Academy! We are happy to have you as part of our learning community. We truly appreciate your support!';
+const DEFAULT_NEGATIVE =
+  'We sincerely apologise that your experience did not meet your expectations. Thank you for sharing your feedback with us. We value your suggestions and will continue working to improve our services.';
 
 const SAMPLE_PRESETS = [
-  { rating: 5, text: "Outstanding Python & Full-Stack Bootcamp! Mentors are true industry experts." },
-  { rating: 4, text: "Great curriculum and hands-on projects. Would appreciate more cloud workshops." },
-  { rating: 3, text: "Decent course content, but weekend lab slot availability could be expanded." },
-  { rating: 2, text: "Encountered two-week administrative delay when requesting my graduation certificate." },
-  { rating: 1, text: "Class timings were altered twice with very short notice. Disappointed with coordination." }
+  { rating: 5, text: 'The Python and Full-Stack Web Dev training here helped me land my first IT role! Great mentors.' },
+  { rating: 4, text: 'Very structured courses and hands-on lab assignments. Loved the practical exercises.' },
+  { rating: 3, text: 'Course materials are solid, though afternoon batch timings could be more flexible.' },
+  { rating: 2, text: 'Had some delays getting lab server access during project week.' },
+  { rating: 1, text: 'Class schedule was changed without early communication. Disappointed.' },
 ];
 
-export default function Overview({ summary, reviews, onNavigate, onSimulateReview }) {
+export default function Overview({ summary, reviews, templates, isLoading, onNavigate, onSimulateReview }) {
   const [testRating, setTestRating] = useState(5);
   const [testText, setTestText] = useState(SAMPLE_PRESETS[0].text);
   const [isSimulating, setIsSimulating] = useState(false);
   const [simMessage, setSimMessage] = useState(null);
   const [recentFilter, setRecentFilter] = useState('all');
 
+  const posTemplateObj = templates?.find((t) => t.category === 'positive');
+  const negTemplateObj = templates?.find((t) => t.category === 'negative');
+  const positiveText = posTemplateObj?.reply_text || DEFAULT_POSITIVE;
+  const negativeText = negTemplateObj?.reply_text || DEFAULT_NEGATIVE;
+  const isSelectedTemplateActive =
+    testRating >= 3 ? (posTemplateObj?.is_active ?? true) : (negTemplateObj?.is_active ?? true);
+
   const handleSimulate = async (e) => {
     e.preventDefault();
+    if (!testText.trim()) return;
     setIsSimulating(true);
     setSimMessage(null);
     try {
       const res = await onSimulateReview({
         star_rating: testRating,
-        review_text: testText,
+        review_text: testText.trim(),
         reviewer_name: `Test Student (${testRating}★)`,
         auto_publish: true,
       });
+      const cat = res.publish_result?.category === 'positive' ? 'Positive' : 'Negative';
+      const pubSuccess = res.publish_result?.success;
       setSimMessage({
-        type: 'success',
-        text: `Review submitted! ${res.publish_result?.category === 'positive' ? 'Positive' : 'Negative'} reply automatically published to Google.`,
+        type: pubSuccess ? 'success' : 'warning',
+        text: pubSuccess
+          ? `Simulated review ingested! ${cat} reply selected and processed.`
+          : `Simulated review stored as pending (${res.publish_result?.message || 'automation paused'}).`,
       });
     } catch (err) {
       setSimMessage({
@@ -56,17 +74,39 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
     }
   };
 
-  const dist = summary?.star_rating_distribution || { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-  const total = summary?.total_reviews || 1;
+  if (isLoading && !summary) {
+    return (
+      <div className="space-y-6">
+        <div className="h-12 w-72 bg-slate-200 rounded-xl animate-pulse" />
+        <KpiGridSkeleton count={6} />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <CardSkeleton height="h-80" />
+          <div className="lg:col-span-2">
+            <CardSkeleton height="h-80" />
+          </div>
+        </div>
+        <CardSkeleton height="h-64" />
+      </div>
+    );
+  }
 
-  // Effective timestamp prioritizing published replies, then incoming review date
+  const dist = summary?.star_rating_distribution || { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+  const total = summary?.total_reviews || 0;
+  const pendingCount = (reviews || []).filter((r) => {
+    const st = (r.publishing_status || r.processing_status || '').toLowerCase();
+    return st === 'pending' || st === 'verification_pending';
+  }).length;
+
   const getEffectiveTime = (r) => {
     const pubTime = r.reply_published_at ? new Date(r.reply_published_at).getTime() : 0;
-    const revTime = r.review_created_at ? new Date(r.review_created_at).getTime() : (r.created_at ? new Date(r.created_at).getTime() : 0);
+    const revTime = r.review_created_at
+      ? new Date(r.review_created_at).getTime()
+      : r.created_at
+      ? new Date(r.created_at).getTime()
+      : 0;
     return Math.max(pubTime, revTime);
   };
 
-  // Filter and sort recent reviews
   const filteredRecent = (reviews || [])
     .filter((r) => {
       if (recentFilter === 'positive') return r.star_rating >= 3;
@@ -76,27 +116,29 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
     .sort((a, b) => getEffectiveTime(b) - getEffectiveTime(a));
 
   return (
-    <div className="space-y-8 animate-in fade-in duration-200">
+    <div className="space-y-7 page-enter">
       {/* Page Title & Quick Actions */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Dashboard Overview</h1>
+          <h1 className="text-2xl font-bold text-navy-900 tracking-tight">Dashboard Overview</h1>
           <p className="text-sm text-slate-500 mt-1">
             Real-time review monitoring and deterministic reply automation for Techzone Academy.
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
           <button
-            onClick={() => onNavigate('reviews')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-slate-700 hover:bg-slate-50 hover:text-slate-900 shadow-xs transition-all"
+            type="button"
+            onClick={() => onNavigate('reviews', { category: 'all', rating: 'all', status: 'all' })}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-slate-300 rounded-xl text-xs font-semibold text-navy-900 hover:bg-navy-50 shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
             <MessageSquare size={14} className="text-blue-600" />
             <span>Manage All Reviews</span>
           </button>
           <button
+            type="button"
             onClick={() => onNavigate('templates')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all"
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-semibold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
           >
             <span>Edit Templates</span>
             <ArrowRight size={14} />
@@ -104,7 +146,7 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
         </div>
       </div>
 
-      {/* 6 Metric KPI Cards */}
+      {/* 6 Metric KPI Cards (1-click filtered drilldown) */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
           title="Total Reviews"
@@ -112,80 +154,93 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
           subtitle="Google Business"
           icon={MessageSquare}
           color="blue"
+          onClick={() => onNavigate('reviews', { category: 'all', rating: 'all', status: 'all' })}
         />
         <StatCard
-          title="Positive (3-5★)"
+          title="Positive (3–5★)"
           value={summary?.positive_reviews_count ?? 0}
-          subtitle="Thank you replies"
+          subtitle="Positive template"
           icon={ThumbsUp}
           color="emerald"
+          onClick={() => onNavigate('reviews', { category: 'positive', rating: 'all', status: 'all' })}
         />
         <StatCard
-          title="Negative (1-2★)"
+          title="Negative (1–2★)"
           value={summary?.negative_reviews_count ?? 0}
-          subtitle="Apology replies"
+          subtitle="Apology template"
           icon={ThumbsDown}
           color="rose"
+          onClick={() => onNavigate('reviews', { category: 'negative', rating: 'all', status: 'all' })}
         />
         <StatCard
           title="Published Replies"
           value={summary?.total_published_replies ?? 0}
-          subtitle="100% Automated"
+          subtitle="Verified on Google"
           icon={CheckCircle}
           color="emerald"
+          onClick={() => onNavigate('reviews', { category: 'all', rating: 'all', status: 'published' })}
         />
         <StatCard
-          title="Failed / Pending"
+          title="Failed Replies"
           value={summary?.failed_publishing_attempts ?? 0}
-          subtitle="Issues or paused"
+          subtitle={pendingCount > 0 ? `${pendingCount} pending in queue` : 'No delivery errors'}
           icon={AlertTriangle}
           color="amber"
+          onClick={() =>
+            onNavigate('reviews', {
+              category: 'all',
+              rating: 'all',
+              status: (summary?.failed_publishing_attempts ?? 0) > 0 ? 'failed' : 'pending',
+            })
+          }
         />
         <StatCard
           title="Average Rating"
           value={`${summary?.average_star_rating ?? 0.0} ★`}
-          subtitle="Customer Score"
+          subtitle="Customer score"
           icon={Star}
           color="indigo"
+          onClick={() => onNavigate('analytics')}
         />
       </div>
 
       {/* Grid: Rating Distribution & Interactive Simulator */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Star Rating Breakdown with Click-to-Filter Action */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col justify-between">
+        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
           <div>
-            <div className="flex items-center justify-between mb-2">
-              <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+            <div className="flex items-center justify-between mb-1.5">
+              <h2 className="text-xs font-bold text-navy-900 uppercase tracking-wider">
                 Star Rating Breakdown
               </h2>
-              <span className="text-[11px] font-semibold text-slate-400">Total: {summary?.total_reviews ?? 0}</span>
+              <span className="text-[11px] font-semibold text-slate-500 tabular-nums">Total: {total}</span>
             </div>
             <p className="text-xs text-slate-500 mb-5">
-              Click any rating to inspect matching customer reviews.
+              Select any tier to view matching reviews.
             </p>
 
-            <div className="space-y-3.5">
+            <div className="space-y-2.5">
               {[5, 4, 3, 2, 1].map((stars) => {
                 const count = dist[stars] || 0;
                 const pct = total > 0 ? Math.round((count / total) * 100) : 0;
                 const isPositive = stars >= 3;
                 return (
-                  <div
+                  <button
+                    type="button"
                     key={stars}
-                    onClick={() => onNavigate('reviews')}
-                    className="group cursor-pointer p-1.5 -mx-1.5 rounded-xl hover:bg-slate-50 transition-colors"
-                    title={`Click to view ${stars}-star reviews`}
+                    onClick={() => onNavigate('reviews', { rating: String(stars), category: 'all', status: 'all' })}
+                    className="w-full text-left group cursor-pointer p-2 -mx-2 rounded-xl hover:bg-blue-50/60 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+                    title={`Filter reviews by ${stars} stars`}
                   >
-                    <div className="flex items-center justify-between text-xs font-semibold mb-1">
-                      <div className="flex items-center gap-1.5 text-slate-700 group-hover:text-blue-600 transition-colors">
-                        <span>{stars} Stars</span>
+                    <div className="flex items-center justify-between text-xs font-semibold mb-1.5">
+                      <div className="flex items-center gap-1.5 text-navy-900 group-hover:text-blue-700 transition-colors">
+                        <span>{stars} Star{stars > 1 ? 's' : ''}</span>
                         <Star size={13} className="text-amber-400 fill-amber-400" />
                         <span className="text-[10px] text-slate-400 font-normal">
                           ({isPositive ? 'Positive' : 'Negative'})
                         </span>
                       </div>
-                      <span className="text-slate-500 font-medium">{count} ({pct}%)</span>
+                      <span className="text-slate-600 font-medium tabular-nums">{count} ({pct}%)</span>
                     </div>
                     <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden">
                       <div
@@ -193,15 +248,15 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
                           isPositive ? 'bg-emerald-500' : 'bg-rose-500'
                         }`}
                         style={{ width: `${pct}%` }}
-                      ></div>
+                      />
                     </div>
-                  </div>
+                  </button>
                 );
               })}
             </div>
           </div>
 
-          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
+          <div className="mt-5 pt-4 border-t border-slate-100 flex items-center justify-between text-xs text-slate-500">
             <span className="flex items-center gap-1.5">
               <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 inline-block"></span>
               Positive: 3, 4, 5★
@@ -213,28 +268,28 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
           </div>
         </div>
 
-        {/* Interactive Live Review Simulator Card */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-6 shadow-xs flex flex-col justify-between">
+        {/* Interactive Local Review Simulator Card */}
+        <div className="lg:col-span-2 bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
           <div>
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-2">
-              <div className="flex items-center gap-2">
-                <div className="p-1.5 rounded-lg bg-blue-50 text-blue-600">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded-xl bg-blue-50 text-blue-600 border border-blue-100">
                   <Zap size={16} />
                 </div>
-                <h2 className="text-sm font-bold text-slate-900 uppercase tracking-wider">
+                <h2 className="text-sm font-bold text-navy-900 uppercase tracking-wider">
                   Interactive Review Simulator
                 </h2>
               </div>
-              <span className="inline-flex items-center gap-1 text-[11px] bg-blue-50 text-blue-700 font-semibold px-2 py-0.5 rounded-md border border-blue-200">
+              <span className="inline-flex items-center gap-1 text-[11px] bg-blue-50 text-blue-700 font-semibold px-2.5 py-1 rounded-lg border border-blue-200 self-start sm:self-auto">
                 <Sparkles size={12} />
-                <span>Instant Auto-Reply Preview</span>
+                <span>Sandbox Test (Never Hits Live Google)</span>
               </span>
             </div>
             <p className="text-xs text-slate-500 mb-4">
-              Select one-click presets or pick any star rating (1–5) to test how Techzone Academy automatically selects and publishes predefined replies.
+              Choose a preset or star rating (1–5★) to verify template selection and ingestion behavior safely in memory.
             </p>
 
-            {/* Quick 1-Click Presets */}
+            {/* Quick Presets */}
             <div className="mb-4">
               <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider block mb-2">
                 Quick Test Presets:
@@ -247,10 +302,11 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
                     onClick={() => {
                       setTestRating(preset.rating);
                       setTestText(preset.text);
+                      setSimMessage(null);
                     }}
-                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all ${
+                    className={`px-2.5 py-1 rounded-lg text-xs font-medium border transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
                       testRating === preset.rating
-                        ? 'bg-blue-50 border-blue-400 text-blue-700 font-semibold ring-2 ring-blue-500/10'
+                        ? 'bg-blue-50 border-blue-400 text-blue-700 font-semibold ring-2 ring-blue-500/15'
                         : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'
                     }`}
                   >
@@ -262,69 +318,92 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
 
             <form onSubmit={handleSimulate} className="space-y-4">
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1.5">
-                  Select Rating: <span className="text-blue-600 font-bold">{testRating} Stars</span> ({testRating >= 3 ? 'Positive Category' : 'Negative Category'})
-                </label>
-                <div className="flex items-center gap-3">
+                <span className="block text-xs font-semibold text-navy-900 mb-1.5">
+                  Select Rating: <span className="text-blue-600 font-bold">{testRating} Star{testRating > 1 ? 's' : ''}</span> ({testRating >= 3 ? 'Positive Category' : 'Negative Category'})
+                </span>
+                <div className="flex flex-wrap items-center gap-3">
                   <StarRating
                     rating={testRating}
                     size={24}
                     interactive={true}
                     onRatingChange={(r) => {
                       setTestRating(r);
-                      const matchingPreset = SAMPLE_PRESETS.find(p => p.rating === r);
+                      const matchingPreset = SAMPLE_PRESETS.find((p) => p.rating === r);
                       if (matchingPreset) setTestText(matchingPreset.text);
+                      setSimMessage(null);
                     }}
                   />
-                  <span className={`text-xs font-bold px-2 py-0.5 rounded ${
-                    testRating >= 3 ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'
-                  }`}>
-                    {testRating >= 3 ? '→ Matches Positive Template' : '→ Matches Negative Template'}
+                  <span
+                    className={`text-xs font-bold px-2.5 py-0.5 rounded-md border ${
+                      testRating >= 3
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                        : 'bg-rose-50 text-rose-700 border-rose-200'
+                    }`}
+                  >
+                    {testRating >= 3 ? 'Matches Positive Template' : 'Matches Negative Template'}
                   </span>
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-slate-700 mb-1">
-                  Customer Review Comment:
+                <label htmlFor="sim-review-comment" className="block text-xs font-semibold text-navy-900 mb-1">
+                  Simulated Customer Comment
                 </label>
                 <input
+                  id="sim-review-comment"
                   type="text"
                   required
                   value={testText}
-                  onChange={(e) => setTestText(e.target.value)}
-                  placeholder="Enter student review comment..."
-                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  onChange={(e) => {
+                    setTestText(e.target.value);
+                    if (simMessage) setSimMessage(null);
+                  }}
+                  placeholder="Enter simulated student review comment..."
+                  className="w-full px-3.5 py-2 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                 />
               </div>
 
-              {/* Dynamic Live Reply Matching Preview */}
-              <div className={`p-3.5 rounded-xl border text-xs leading-relaxed transition-all ${
-                testRating >= 3 ? 'bg-emerald-50/50 border-emerald-200 text-emerald-900' : 'bg-rose-50/50 border-rose-200 text-rose-900'
-              }`}>
+              {/* Dynamic Live Reply Matching Preview using actual DB templates */}
+              <div
+                className={`p-3.5 rounded-xl border text-xs leading-relaxed transition-all ${
+                  !isSelectedTemplateActive
+                    ? 'bg-amber-50 border-amber-200 text-amber-900'
+                    : testRating >= 3
+                    ? 'bg-emerald-50/50 border-emerald-200 text-emerald-950'
+                    : 'bg-rose-50/50 border-rose-200 text-rose-950'
+                }`}
+              >
                 <div className="flex items-center justify-between font-bold text-[11px] uppercase mb-1">
-                  <span>Selected Reply Template ({testRating >= 3 ? 'Positive: 3, 4, 5★' : 'Negative: 1, 2★'}):</span>
-                  <span>Auto-Dispatch</span>
+                  <span>
+                    Active Reply Template ({testRating >= 3 ? 'Positive: 3, 4, 5★' : 'Negative: 1, 2★'}):
+                  </span>
+                  <span>{isSelectedTemplateActive ? 'Active in DB' : 'Disabled in DB'}</span>
                 </div>
                 <p className="italic">
-                  {testRating >= 3
-                    ? '"Thank you for sharing your valuable feedback with Techzone Academy! We are happy to have you as part of our learning community. We truly appreciate your support!"'
-                    : '"We sincerely apologise that your experience did not meet your expectations. Thank you for sharing your feedback with us. We value your suggestions and will continue working to improve our services."'}
+                  "{testRating >= 3 ? positiveText : negativeText}"
                 </p>
               </div>
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pt-1">
                 <button
                   type="submit"
                   disabled={isSimulating || !testText.trim()}
-                  className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all hover:scale-[1.01] active:scale-[0.99] disabled:opacity-60"
+                  className="inline-flex items-center justify-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:opacity-60"
                 >
-                  <Send size={14} />
-                  <span>{isSimulating ? 'Processing Review...' : 'Ingest & Publish Reply'}</span>
+                  {isSimulating ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                  <span>{isSimulating ? 'Simulating...' : 'Run Local Simulation'}</span>
                 </button>
 
                 {simMessage && (
-                  <span className={`text-xs font-semibold ${simMessage.type === 'success' ? 'text-emerald-700' : 'text-rose-700'}`}>
+                  <span
+                    className={`text-xs font-semibold ${
+                      simMessage.type === 'success'
+                        ? 'text-emerald-700'
+                        : simMessage.type === 'warning'
+                        ? 'text-amber-700'
+                        : 'text-rose-700'
+                    }`}
+                  >
                     {simMessage.text}
                   </span>
                 )}
@@ -335,44 +414,44 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
       </div>
 
       {/* Recent Reviews Feed with Quick Filter Tabs */}
-      <div className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
+      <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div className="px-6 py-4 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-4">
-            <h2 className="text-xs font-bold text-slate-800 uppercase tracking-wider">
+          <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+            <h2 className="text-xs font-bold text-navy-900 uppercase tracking-wider">
               Recent Reviews & Published Responses
             </h2>
-            {/* Quick Filter Tabs */}
-            <div className="flex items-center gap-1 bg-slate-100 p-0.5 rounded-lg text-xs font-semibold text-slate-600">
-              <button
-                onClick={() => setRecentFilter('all')}
-                className={`px-2.5 py-1 rounded-md transition-all ${
-                  recentFilter === 'all' ? 'bg-white text-slate-900 shadow-xs' : 'hover:text-slate-900'
-                }`}
-              >
-                All
-              </button>
-              <button
-                onClick={() => setRecentFilter('positive')}
-                className={`px-2.5 py-1 rounded-md transition-all ${
-                  recentFilter === 'positive' ? 'bg-emerald-50 text-emerald-800 shadow-xs' : 'hover:text-slate-900'
-                }`}
-              >
-                Positive (3-5★)
-              </button>
-              <button
-                onClick={() => setRecentFilter('negative')}
-                className={`px-2.5 py-1 rounded-md transition-all ${
-                  recentFilter === 'negative' ? 'bg-rose-50 text-rose-800 shadow-xs' : 'hover:text-slate-900'
-                }`}
-              >
-                Negative (1-2★)
-              </button>
+            <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl text-xs font-semibold text-slate-600" role="tablist">
+              {[
+                { key: 'all', label: 'All', activeClass: 'bg-white text-navy-900 shadow-sm' },
+                { key: 'positive', label: 'Positive (3–5★)', activeClass: 'bg-emerald-50 text-emerald-800 shadow-sm' },
+                { key: 'negative', label: 'Negative (1–2★)', activeClass: 'bg-rose-50 text-rose-800 shadow-sm' },
+              ].map((tab) => (
+                <button
+                  type="button"
+                  key={tab.key}
+                  role="tab"
+                  aria-selected={recentFilter === tab.key}
+                  onClick={() => setRecentFilter(tab.key)}
+                  className={`px-2.5 py-1 rounded-lg transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                    recentFilter === tab.key ? tab.activeClass : 'hover:text-navy-900'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
             </div>
           </div>
 
           <button
-            onClick={() => onNavigate('reviews')}
-            className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1 self-start sm:self-auto"
+            type="button"
+            onClick={() =>
+              onNavigate('reviews', {
+                category: recentFilter === 'all' ? 'all' : recentFilter,
+                rating: 'all',
+                status: 'all',
+              })
+            }
+            className="text-xs font-bold text-blue-600 hover:text-blue-800 inline-flex items-center gap-1 self-start sm:self-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 rounded-lg px-1"
           >
             <span>View All Reviews</span>
             <ArrowRight size={14} />
@@ -381,35 +460,48 @@ export default function Overview({ summary, reviews, onNavigate, onSimulateRevie
 
         <div className="divide-y divide-slate-100">
           {filteredRecent.length === 0 ? (
-            <div className="p-8 text-center text-slate-400 text-sm">
-              No recent reviews match the selected filter.
+            <div className="p-10 text-center space-y-2">
+              <p className="text-slate-500 text-sm font-medium">No recent reviews match the selected filter.</p>
+              {recentFilter !== 'all' && (
+                <button
+                  type="button"
+                  onClick={() => setRecentFilter('all')}
+                  className="text-xs font-semibold text-blue-600 hover:text-blue-800 underline"
+                >
+                  Show all reviews
+                </button>
+              )}
             </div>
           ) : (
             filteredRecent.slice(0, 8).map((rev) => (
-              <div key={rev.id} className="p-5 sm:p-6 hover:bg-slate-50/70 transition-colors">
+              <div key={rev.id} className="p-5 sm:p-6 hover:bg-blue-50/30 transition-colors">
                 <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-bold text-slate-900 text-sm">{rev.reviewer_name || 'Valued Customer'}</span>
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <span className="font-bold text-navy-900 text-sm">{rev.reviewer_name || 'Valued Customer'}</span>
                       <StarRating rating={rev.star_rating} size={15} />
                       <span className="text-xs text-slate-400">
-                        {new Date(rev.review_created_at || rev.created_at).toLocaleDateString()}
+                        {new Date(rev.reply_published_at || rev.review_created_at || rev.created_at).toLocaleDateString()}
                       </span>
                     </div>
-                    <p className="text-sm text-slate-700 mt-2 italic leading-relaxed">"{rev.review_text}"</p>
+                    {rev.review_text && rev.review_text.trim() ? (
+                      <p className="text-sm text-slate-700 mt-2 italic leading-relaxed">"{rev.review_text}"</p>
+                    ) : (
+                      <p className="text-xs text-slate-400 mt-2 italic">No written comment — star rating only</p>
+                    )}
                   </div>
                   <StatusBadge status={rev.publishing_status || rev.processing_status} />
                 </div>
 
                 {rev.matched_reply && (
-                  <div className="mt-3.5 pl-4 border-l-2 border-blue-500 bg-blue-50/40 p-3.5 rounded-r-xl">
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-bold text-blue-900">Techzone Academy Published Reply:</span>
-                      <span className="text-[11px] text-blue-600 font-semibold">
+                  <div className="mt-3.5 pl-4 border-l-2 border-blue-600 bg-blue-50/50 p-3.5 rounded-r-xl">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <span className="text-xs font-bold text-navy-900">Techzone Academy Published Reply:</span>
+                      <span className="text-[11px] text-blue-700 font-semibold">
                         ({rev.star_rating >= 3 ? 'Positive Template' : 'Negative Template'})
                       </span>
                     </div>
-                    <p className="text-xs text-blue-900 leading-relaxed">{rev.matched_reply}</p>
+                    <p className="text-xs text-slate-800 leading-relaxed">{rev.matched_reply}</p>
                   </div>
                 )}
               </div>

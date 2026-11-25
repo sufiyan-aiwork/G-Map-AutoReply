@@ -403,3 +403,79 @@ async def test_scheduler_independent_of_admin_login_and_logout():
             assert not SchedulerService._scheduler_task.done()
         finally:
             await SchedulerService.stop_background_loop()
+
+
+# ====================================================================
+# 8. CORS Preflight & Cookie Credential Behavior for Vite Origins
+# ====================================================================
+@pytest.mark.asyncio
+async def test_admin_cors_preflight_allows_vite_origins_with_credentials():
+    allowed_origins = [
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+    ]
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        for origin in allowed_origins:
+            assert origin in settings.CORS_ORIGINS
+
+            pre_me = await ac.options(
+                "/api/admin/me",
+                headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "GET",
+                    "Access-Control-Request-Headers": "content-type",
+                },
+            )
+            assert pre_me.status_code == 200
+            assert pre_me.headers.get("access-control-allow-origin") == origin
+            assert pre_me.headers.get("access-control-allow-credentials") == "true"
+            assert "content-type" in pre_me.headers.get("access-control-allow-headers", "").lower()
+
+            pre_login = await ac.options(
+                "/api/admin/login",
+                headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "POST",
+                    "Access-Control-Request-Headers": "content-type",
+                },
+            )
+            assert pre_login.status_code == 200
+            assert pre_login.headers.get("access-control-allow-origin") == origin
+            assert pre_login.headers.get("access-control-allow-credentials") == "true"
+            assert "POST" in pre_login.headers.get("access-control-allow-methods", "")
+
+
+@pytest.mark.asyncio
+async def test_admin_cors_rejects_untrusted_origin_and_preserves_cookie_login_session():
+    await _seed_test_admin("test_cors_admin", "CorsPass!123")
+    vite_origin = "http://localhost:5174"
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        disallowed = await ac.options(
+            "/api/admin/login",
+            headers={
+                "Origin": "https://untrusted.example.com",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "content-type",
+            },
+        )
+        assert disallowed.status_code == 400
+        assert "access-control-allow-origin" not in disallowed.headers
+
+        login_res = await ac.post(
+            "/api/admin/login",
+            headers={"Origin": vite_origin},
+            json={"username": "test_cors_admin", "password": "CorsPass!123"},
+        )
+        assert login_res.status_code == 200
+        assert login_res.headers.get("access-control-allow-origin") == vite_origin
+        assert login_res.headers.get("access-control-allow-credentials") == "true"
+
+        me_res = await ac.get("/api/admin/me", headers={"Origin": vite_origin})
+        assert me_res.status_code == 200
+        assert me_res.json()["authenticated"] is True
+        assert me_res.json()["admin"]["username"] == "test_cors_admin"
+        assert me_res.headers.get("access-control-allow-origin") == vite_origin
+        assert me_res.headers.get("access-control-allow-credentials") == "true"

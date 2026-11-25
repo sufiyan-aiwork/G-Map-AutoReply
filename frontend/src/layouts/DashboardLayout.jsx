@@ -7,6 +7,7 @@ export default function DashboardLayout({
   currentTab,
   onSelectTab,
   autoReplyEnabled,
+  pollingInterval,
   onToggleAutomation,
   onRefresh,
   onSyncReviews,
@@ -19,16 +20,19 @@ export default function DashboardLayout({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="flex h-screen bg-slate-50/80 overflow-hidden font-sans">
+    <div className="flex h-screen bg-[#f4f7fb] overflow-hidden font-sans">
       <Sidebar
         currentTab={currentTab}
         onSelectTab={onSelectTab}
         isOpen={mobileMenuOpen}
         onClose={() => setMobileMenuOpen(false)}
+        autoReplyEnabled={autoReplyEnabled}
+        pollingInterval={pollingInterval}
       />
 
       <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
         <Navbar
+          currentTab={currentTab}
           autoReplyEnabled={autoReplyEnabled}
           onToggleAutomation={onToggleAutomation}
           onRefresh={onRefresh}
