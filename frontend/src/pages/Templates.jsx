@@ -11,11 +11,11 @@ import {
   RotateCcw,
   Copy,
   Check,
-  GraduationCap,
   Loader2
 } from 'lucide-react';
 import StarRating from '../components/StarRating';
 import ConfirmDialog from '../components/ConfirmDialog';
+import BrandLogo from '../components/BrandLogo';
 import { CardSkeleton } from '../components/SkeletonLoader';
 
 const INITIAL_DEFAULT_POSITIVE =
@@ -76,7 +76,7 @@ export default function Templates({ templates, isLoading, onUpdateTemplate }) {
         type: 'success',
         text: `Saved ${category.toUpperCase()} reply template to Supabase.`,
       });
-      setTimeout(() => setStatusMessage(null), 4000);
+      setTimeout(() => setStatusMessage(null), 4500);
     } catch (err) {
       setStatusMessage({
         type: 'error',
@@ -116,7 +116,7 @@ export default function Templates({ templates, isLoading, onUpdateTemplate }) {
       category,
       title: `Restore Default ${category === 'positive' ? 'Positive' : 'Negative'} Copy?`,
       description:
-        'This replaces the text in the editor box with the original Techzone Academy wording. Click Save afterwards to persist the change to Supabase.',
+        'This replaces the text in the editor box with the original TechZone Academy wording. Click Save afterwards to persist the change to Supabase.',
       confirmLabel: 'Restore Default Text',
       variant: 'primary',
     });
@@ -151,15 +151,14 @@ export default function Templates({ templates, isLoading, onUpdateTemplate }) {
         };
       }
       return { text: positiveText };
-    } else {
-      if (!negativeActive) {
-        return {
-          text: '[Template is currently deactivated: Reply will NOT be published to Google]',
-          disabled: true,
-        };
-      }
-      return { text: negativeText };
     }
+    if (!negativeActive) {
+      return {
+        text: '[Template is currently deactivated: Reply will NOT be published to Google]',
+        disabled: true,
+      };
+    }
+    return { text: negativeText };
   };
 
   const preview = getPreviewReply();
@@ -167,7 +166,7 @@ export default function Templates({ templates, isLoading, onUpdateTemplate }) {
   if (isLoading && (!templates || templates.length === 0)) {
     return (
       <div className="space-y-6">
-        <div className="h-12 w-72 bg-slate-200 rounded-xl animate-pulse" />
+        <div className="h-12 w-72 rounded-xl skeleton-shimmer" />
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <CardSkeleton height="h-80" />
           <CardSkeleton height="h-80" />
@@ -181,22 +180,28 @@ export default function Templates({ templates, isLoading, onUpdateTemplate }) {
     <div className="space-y-6 page-enter">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-navy-900 tracking-tight">Predefined Reply Templates</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Techzone Academy enforces two fixed brand-approved templates matched deterministically by star rating (3–5★ positive, 1–2★ negative).
+        <h1 className="font-heading text-2xl font-bold text-[#1a1a2e] tracking-tight">
+          Predefined Reply Templates
+        </h1>
+        <p className="text-sm text-[#64748b] mt-1">
+          TechZone Academy enforces two fixed brand-approved templates matched deterministically by star rating (3–5★ positive, 1–2★ negative).
         </p>
       </div>
 
       {statusMessage && (
         <div
           role="status"
-          className={`p-4 rounded-2xl border flex items-center gap-3 text-sm font-semibold shadow-sm page-enter ${
+          className={`p-4 rounded-2xl border flex items-center gap-3 text-sm font-semibold shadow-tz-card toast-enter ${
             statusMessage.type === 'success'
               ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
               : 'bg-rose-50 border-rose-200 text-rose-800'
           }`}
         >
-          {statusMessage.type === 'success' ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
+          {statusMessage.type === 'success' ? (
+            <CheckCircle size={18} className="text-emerald-600 shrink-0" />
+          ) : (
+            <AlertCircle size={18} className="text-rose-600 shrink-0" />
+          )}
           <span>{statusMessage.text}</span>
         </div>
       )}
@@ -204,276 +209,299 @@ export default function Templates({ templates, isLoading, onUpdateTemplate }) {
       {/* Two Templates Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Template 1: Positive */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-100">
-                  <ThumbsUp size={21} />
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-base font-bold text-navy-900">Positive Reply Template</h2>
-                    {isPosDirty && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                        Unsaved changes
+        <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-tz-card overflow-hidden flex flex-col justify-between">
+          <div className="h-1 w-full bg-gradient-to-r from-[#025091] to-emerald-500" />
+          <div className="p-6 flex-1 flex flex-col justify-between">
+            <div>
+              <div className="flex items-start justify-between gap-3 pb-4 border-b border-[#e2e8f0]">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-emerald-50 text-emerald-600 border border-emerald-200">
+                    <ThumbsUp size={20} />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="font-heading text-base font-bold text-[#1a1a2e]">
+                        Positive Reply Template
+                      </h2>
+                      {isPosDirty && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                          Unsaved changes
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className="text-xs text-[#64748b]">Applies to:</span>
+                      <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
+                        3, 4, and 5 Stars
                       </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <span className="text-xs text-slate-500">Applies to:</span>
-                    <span className="text-xs font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-md border border-emerald-200">
-                      3, 4, and 5 Stars
-                    </span>
+                    </div>
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={positiveActive}
+                  aria-label="Toggle Positive Template activation"
+                  onClick={() => setPositiveActive(!positiveActive)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-[#64748b] hover:text-[#1a1a2e] rounded-lg p-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 shrink-0"
+                >
+                  {positiveActive ? (
+                    <ToggleRight size={30} className="text-emerald-600" />
+                  ) : (
+                    <ToggleLeft size={30} className="text-slate-400" />
+                  )}
+                  <span className={positiveActive ? 'text-emerald-700 font-bold' : 'text-[#64748b] font-medium'}>
+                    {positiveActive ? 'Active' : 'Disabled'}
+                  </span>
+                </button>
               </div>
 
+              <div className="mt-5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label htmlFor="positive-template-text" className="text-xs font-bold text-[#1a1a2e]">
+                    Template Content
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(positiveText, 'positive')}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#64748b] hover:text-[#025091] transition-colors"
+                    >
+                      {copiedCategory === 'positive' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                      <span>{copiedCategory === 'positive' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleResetClick('positive')}
+                      disabled={positiveText === INITIAL_DEFAULT_POSITIVE}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#64748b] hover:text-[#025091] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title="Restore original default wording"
+                    >
+                      <RotateCcw size={11} />
+                      <span>Reset Default</span>
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  id="positive-template-text"
+                  rows={5}
+                  value={positiveText}
+                  onChange={(e) => setPositiveText(e.target.value)}
+                  placeholder="Enter positive reply template text..."
+                  className="w-full p-4 text-sm bg-[#f8fafc] border border-[#e2e8f0] rounded-xl text-[#1a1a2e] focus:outline-none focus:ring-2 focus:ring-[#025091]/30 focus:border-[#025091] focus:bg-white leading-relaxed font-sans transition-all duration-150"
+                />
+                <div className="flex justify-between items-center text-[11px] text-[#64748b] mt-1.5">
+                  <span>Minimum 5 characters</span>
+                  <span className="font-medium text-[#1a1a2e] tabular-nums">
+                    {positiveText.length} characters
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-[#e2e8f0] flex items-center justify-between gap-3">
+              <span className="text-xs text-[#64748b]">Auto-selected for 3★, 4★, and 5★ reviews</span>
               <button
                 type="button"
-                role="switch"
-                aria-checked={positiveActive}
-                aria-label="Toggle Positive Template activation"
-                onClick={() => setPositiveActive(!positiveActive)}
-                className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-navy-900 rounded-lg p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 shrink-0"
+                onClick={() => handleSaveClick('positive')}
+                disabled={savingCategory === 'positive' || positiveText.trim().length < 5 || !isPosDirty}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-[#025091] hover:bg-[#023e73] text-white rounded-xl text-xs font-bold shadow-sm transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 disabled:opacity-45 disabled:cursor-not-allowed"
               >
-                {positiveActive ? (
-                  <ToggleRight size={30} className="text-emerald-600" />
-                ) : (
-                  <ToggleLeft size={30} className="text-slate-400" />
-                )}
-                <span className={positiveActive ? 'text-emerald-700 font-bold' : 'text-slate-400 font-medium'}>
-                  {positiveActive ? 'Active' : 'Disabled'}
+                {savingCategory === 'positive' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                <span>
+                  {savingCategory === 'positive' ? 'Saving...' : isPosDirty ? 'Save Positive Template' : 'Saved'}
                 </span>
               </button>
             </div>
-
-            <div className="mt-5">
-              <div className="flex items-center justify-between mb-1.5">
-                <label htmlFor="positive-template-text" className="text-xs font-bold text-navy-900">
-                  Template Content
-                </label>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(positiveText, 'positive')}
-                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-navy-900"
-                  >
-                    {copiedCategory === 'positive' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
-                    <span>{copiedCategory === 'positive' ? 'Copied' : 'Copy'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleResetClick('positive')}
-                    disabled={positiveText === INITIAL_DEFAULT_POSITIVE}
-                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-blue-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Restore original default wording"
-                  >
-                    <RotateCcw size={11} />
-                    <span>Reset Default</span>
-                  </button>
-                </div>
-              </div>
-
-              <textarea
-                id="positive-template-text"
-                rows={5}
-                value={positiveText}
-                onChange={(e) => setPositiveText(e.target.value)}
-                placeholder="Enter positive reply template text..."
-                className="w-full p-4 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white leading-relaxed font-sans transition-all"
-              />
-              <div className="flex justify-between items-center text-[11px] text-slate-400 mt-1.5">
-                <span>Minimum 5 characters</span>
-                <span className="font-medium text-slate-500 tabular-nums">{positiveText.length} characters</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
-            <span className="text-xs text-slate-500">Auto-selected for 3★, 4★, 5★ reviews</span>
-            <button
-              type="button"
-              onClick={() => handleSaveClick('positive')}
-              disabled={savingCategory === 'positive' || positiveText.trim().length < 5 || !isPosDirty}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {savingCategory === 'positive' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-              <span>{savingCategory === 'positive' ? 'Saving...' : isPosDirty ? 'Save Positive Template' : 'Saved'}</span>
-            </button>
           </div>
         </div>
 
         {/* Template 2: Negative */}
-        <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm flex flex-col justify-between">
-          <div>
-            <div className="flex items-start justify-between gap-3 pb-4 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-rose-50 text-rose-600 border border-rose-100">
-                  <ThumbsDown size={21} />
-                </div>
-                <div>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <h2 className="text-base font-bold text-navy-900">Negative Reply Template</h2>
-                    {isNegDirty && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
-                        Unsaved changes
+        <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-tz-card overflow-hidden flex flex-col justify-between">
+          <div className="h-1 w-full bg-gradient-to-r from-rose-500 to-amber-500" />
+          <div className="p-6 flex-1 flex flex-col justify-between">
+            <div>
+              <div className="flex items-start justify-between gap-3 pb-4 border-b border-[#e2e8f0]">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 rounded-xl bg-rose-50 text-rose-600 border border-rose-200">
+                    <ThumbsDown size={20} />
+                  </div>
+                  <div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h2 className="font-heading text-base font-bold text-[#1a1a2e]">
+                        Negative Reply Template
+                      </h2>
+                      {isNegDirty && (
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                          Unsaved changes
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1">
+                      <span className="text-xs text-[#64748b]">Applies to:</span>
+                      <span className="text-xs font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
+                        1 and 2 Stars
                       </span>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-1.5 mt-1">
-                    <span className="text-xs text-slate-500">Applies to:</span>
-                    <span className="text-xs font-bold text-rose-700 bg-rose-50 px-2 py-0.5 rounded-md border border-rose-200">
-                      1 and 2 Stars
-                    </span>
+                    </div>
                   </div>
                 </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={negativeActive}
+                  aria-label="Toggle Negative Template activation"
+                  onClick={() => setNegativeActive(!negativeActive)}
+                  className="flex items-center gap-1.5 text-xs font-bold text-[#64748b] hover:text-[#1a1a2e] rounded-lg p-1 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40 shrink-0"
+                >
+                  {negativeActive ? (
+                    <ToggleRight size={30} className="text-rose-600" />
+                  ) : (
+                    <ToggleLeft size={30} className="text-slate-400" />
+                  )}
+                  <span className={negativeActive ? 'text-rose-700 font-bold' : 'text-[#64748b] font-medium'}>
+                    {negativeActive ? 'Active' : 'Disabled'}
+                  </span>
+                </button>
               </div>
 
+              <div className="mt-5">
+                <div className="flex items-center justify-between mb-1.5">
+                  <label htmlFor="negative-template-text" className="text-xs font-bold text-[#1a1a2e]">
+                    Template Content
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleCopy(negativeText, 'negative')}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#64748b] hover:text-[#025091] transition-colors"
+                    >
+                      {copiedCategory === 'negative' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
+                      <span>{copiedCategory === 'negative' ? 'Copied' : 'Copy'}</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleResetClick('negative')}
+                      disabled={negativeText === INITIAL_DEFAULT_NEGATIVE}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#64748b] hover:text-[#025091] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                      title="Restore original default wording"
+                    >
+                      <RotateCcw size={11} />
+                      <span>Reset Default</span>
+                    </button>
+                  </div>
+                </div>
+
+                <textarea
+                  id="negative-template-text"
+                  rows={5}
+                  value={negativeText}
+                  onChange={(e) => setNegativeText(e.target.value)}
+                  placeholder="Enter negative reply template text..."
+                  className="w-full p-4 text-sm bg-[#f8fafc] border border-[#e2e8f0] rounded-xl text-[#1a1a2e] focus:outline-none focus:ring-2 focus:ring-rose-500/30 focus:border-rose-500 focus:bg-white leading-relaxed font-sans transition-all duration-150"
+                />
+                <div className="flex justify-between items-center text-[11px] text-[#64748b] mt-1.5">
+                  <span>Minimum 5 characters</span>
+                  <span className="font-medium text-[#1a1a2e] tabular-nums">
+                    {negativeText.length} characters
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 pt-4 border-t border-[#e2e8f0] flex items-center justify-between gap-3">
+              <span className="text-xs text-[#64748b]">Auto-selected for 1★ and 2★ reviews</span>
               <button
                 type="button"
-                role="switch"
-                aria-checked={negativeActive}
-                aria-label="Toggle Negative Template activation"
-                onClick={() => setNegativeActive(!negativeActive)}
-                className="flex items-center gap-1.5 text-xs font-bold text-slate-600 hover:text-navy-900 rounded-lg p-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 shrink-0"
+                onClick={() => handleSaveClick('negative')}
+                disabled={savingCategory === 'negative' || negativeText.trim().length < 5 || !isNegDirty}
+                className="inline-flex items-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40 disabled:opacity-45 disabled:cursor-not-allowed"
               >
-                {negativeActive ? (
-                  <ToggleRight size={30} className="text-rose-600" />
-                ) : (
-                  <ToggleLeft size={30} className="text-slate-400" />
-                )}
-                <span className={negativeActive ? 'text-rose-700 font-bold' : 'text-slate-400 font-medium'}>
-                  {negativeActive ? 'Active' : 'Disabled'}
+                {savingCategory === 'negative' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                <span>
+                  {savingCategory === 'negative' ? 'Saving...' : isNegDirty ? 'Save Negative Template' : 'Saved'}
                 </span>
               </button>
             </div>
-
-            <div className="mt-5">
-              <div className="flex items-center justify-between mb-1.5">
-                <label htmlFor="negative-template-text" className="text-xs font-bold text-navy-900">
-                  Template Content
-                </label>
-                <div className="flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => handleCopy(negativeText, 'negative')}
-                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-navy-900"
-                  >
-                    {copiedCategory === 'negative' ? <Check size={12} className="text-emerald-600" /> : <Copy size={12} />}
-                    <span>{copiedCategory === 'negative' ? 'Copied' : 'Copy'}</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleResetClick('negative')}
-                    disabled={negativeText === INITIAL_DEFAULT_NEGATIVE}
-                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-blue-600 disabled:opacity-40 disabled:cursor-not-allowed"
-                    title="Restore original default wording"
-                  >
-                    <RotateCcw size={11} />
-                    <span>Reset Default</span>
-                  </button>
-                </div>
-              </div>
-
-              <textarea
-                id="negative-template-text"
-                rows={5}
-                value={negativeText}
-                onChange={(e) => setNegativeText(e.target.value)}
-                placeholder="Enter negative reply template text..."
-                className="w-full p-4 text-sm bg-slate-50 border border-slate-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-rose-500 focus:bg-white leading-relaxed font-sans transition-all"
-              />
-              <div className="flex justify-between items-center text-[11px] text-slate-400 mt-1.5">
-                <span>Minimum 5 characters</span>
-                <span className="font-medium text-slate-500 tabular-nums">{negativeText.length} characters</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="mt-6 pt-4 border-t border-slate-100 flex items-center justify-between gap-3">
-            <span className="text-xs text-slate-500">Auto-selected for 1★ and 2★ reviews</span>
-            <button
-              type="button"
-              onClick={() => handleSaveClick('negative')}
-              disabled={savingCategory === 'negative' || negativeText.trim().length < 5 || !isNegDirty}
-              className="inline-flex items-center gap-2 px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white rounded-xl text-xs font-bold shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {savingCategory === 'negative' ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-              <span>{savingCategory === 'negative' ? 'Saving...' : isNegDirty ? 'Save Negative Template' : 'Saved'}</span>
-            </button>
           </div>
         </div>
       </div>
 
       {/* Live Google Review Thread Simulator */}
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 sm:p-7 shadow-sm">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-100">
-          <div className="flex items-center gap-2">
-            <Eye size={18} className="text-blue-600" />
-            <h2 className="text-sm font-bold text-navy-900 uppercase tracking-wider">
-              Google Review Thread Preview
-            </h2>
-          </div>
-          <span className="text-xs text-slate-500">Select a star rating to inspect how your reply renders on Google</span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-3 mb-5">
-          <span className="text-xs font-bold text-navy-900">Preview Rating:</span>
-          <StarRating
-            rating={previewRating}
-            size={22}
-            interactive={true}
-            onRatingChange={setPreviewRating}
-          />
-          <span
-            className={`text-xs font-bold px-2.5 py-0.5 rounded-md border ${
-              previewRating >= 3
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                : 'bg-rose-50 text-rose-800 border-rose-200'
-            }`}
-          >
-            {previewRating} Star{previewRating > 1 ? 's' : ''} ({previewRating >= 3 ? 'Positive Template' : 'Negative Template'})
-          </span>
-        </div>
-
-        <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-4 max-w-2xl">
-          <div className="flex items-start gap-3">
-            <div className="w-10 h-10 rounded-full bg-blue-600 text-white font-bold flex items-center justify-center shrink-0 text-sm">
-              S
+      <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-tz-card overflow-hidden">
+        <div className="h-1 w-full tz-top-accent" />
+        <div className="p-6 sm:p-7">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4 pb-3 border-b border-[#e2e8f0]">
+            <div className="flex items-center gap-2">
+              <Eye size={18} className="text-[#025091]" />
+              <h2 className="font-heading text-sm font-bold text-[#1a1a2e] uppercase tracking-wider">
+                Google Review Thread Preview
+              </h2>
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-navy-900 text-sm">Sample Student</span>
-                <span className="text-xs text-slate-400">· Preview</span>
-              </div>
-              <StarRating rating={previewRating} size={14} />
-              <p className="text-sm text-slate-700 mt-1.5 italic">
-                {previewRating >= 3
-                  ? '"Learned full-stack development at Techzone Academy. Great instructors and practical projects!"'
-                  : '"Had some scheduling confusion with batch timings. Hope the team improves communication."'}
-              </p>
-            </div>
+            <span className="text-xs text-[#64748b]">
+              Select a star rating to inspect how your reply renders on Google
+            </span>
           </div>
 
-          <div className="ml-6 pl-4 border-l-2 border-blue-500 flex items-start gap-3">
-            <div className="w-8 h-8 rounded-full bg-navy-900 text-white font-bold flex items-center justify-center shrink-0">
-              <GraduationCap size={15} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="font-bold text-navy-900 text-xs">Response from Techzone Academy (Owner)</span>
-                <span className="text-[11px] text-blue-700 bg-blue-50 px-2 py-0.5 rounded font-semibold border border-blue-200">
-                  Predefined
-                </span>
+          <div className="flex flex-wrap items-center gap-3 mb-5">
+            <span className="text-xs font-bold text-[#1a1a2e]">Preview Rating:</span>
+            <StarRating
+              rating={previewRating}
+              size={22}
+              interactive={true}
+              onRatingChange={setPreviewRating}
+            />
+            <span
+              className={`text-xs font-bold px-2.5 py-0.5 rounded-md border ${
+                previewRating >= 3
+                  ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                  : 'bg-rose-50 text-rose-800 border-rose-200'
+              }`}
+            >
+              {previewRating} Star{previewRating > 1 ? 's' : ''} ({previewRating >= 3 ? 'Positive Template' : 'Negative Template'})
+            </span>
+          </div>
+
+          <div className="p-5 rounded-2xl bg-[#f8fafc] border border-[#e2e8f0] space-y-4 max-w-2xl">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-[#025091] text-white font-bold flex items-center justify-center shrink-0 text-sm">
+                S
               </div>
-              <p
-                className={`text-xs mt-1.5 leading-relaxed ${
-                  preview.disabled ? 'text-rose-600 font-bold' : 'text-slate-800'
-                }`}
-              >
-                {preview.text}
-              </p>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-bold text-[#1a1a2e] text-sm">Sample Student</span>
+                  <span className="text-xs text-[#64748b]">· Preview</span>
+                </div>
+                <StarRating rating={previewRating} size={14} />
+                <p className="text-sm text-[#1a1a2e]/85 mt-1.5 italic">
+                  {previewRating >= 3
+                    ? '"Learned full-stack development at TechZone Academy. Great instructors and practical projects!"'
+                    : '"Had some scheduling confusion with batch timings. Hope the team improves communication."'}
+                </p>
+              </div>
+            </div>
+
+            <div className="ml-6 pl-4 border-l-2 border-[#025091] flex items-start gap-3">
+              <BrandLogo size="sm" surface="light" />
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-bold text-[#1a1a2e] text-xs">
+                    Response from TechZone Academy (Owner)
+                  </span>
+                  <span className="text-[11px] text-[#025091] bg-[#e8f1f8] px-2 py-0.5 rounded font-semibold border border-[#b9d7ef]">
+                    Predefined
+                  </span>
+                </div>
+                <p
+                  className={`text-xs mt-1.5 leading-relaxed ${
+                    preview.disabled ? 'text-rose-600 font-bold' : 'text-[#1a1a2e]/90'
+                  }`}
+                >
+                  {preview.text}
+                </p>
+              </div>
             </div>
           </div>
         </div>

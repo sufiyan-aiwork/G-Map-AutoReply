@@ -21,20 +21,20 @@ export default function StarRating({ rating = 5, size = 18, interactive = false,
             aria-checked={interactive ? isFilled && star === rating : undefined}
             aria-label={`${star} Star${star > 1 ? 's' : ''}`}
             onClick={() => interactive && onRatingChange && onRatingChange(star)}
-            className={`rounded ${
+            className={`rounded-md p-0.5 transition-transform duration-150 ${
               interactive
-                ? 'cursor-pointer hover:scale-110 transition-transform focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500'
-                : 'cursor-default focus:outline-none'
+                ? 'cursor-pointer hover:scale-110 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40'
+                : 'cursor-default focus:outline-none pointer-events-none'
             }`}
             title={`${star} Star${star > 1 ? 's' : ''}`}
           >
             <Star
               size={size}
-              className={`${
+              className={`transition-colors duration-150 ${
                 isFilled
                   ? 'text-amber-400 fill-amber-400'
                   : 'text-slate-300 stroke-slate-300'
-              } transition-colors`}
+              }`}
             />
           </button>
         );

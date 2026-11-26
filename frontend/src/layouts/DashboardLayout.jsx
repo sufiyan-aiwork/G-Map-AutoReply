@@ -20,7 +20,7 @@ export default function DashboardLayout({
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <div className="flex h-screen bg-[#f4f7fb] overflow-hidden font-sans">
+    <div className="flex h-screen bg-[#f6f9fc] overflow-hidden font-sans">
       <Sidebar
         currentTab={currentTab}
         onSelectTab={onSelectTab}
@@ -45,8 +45,8 @@ export default function DashboardLayout({
           onLogout={onLogout}
         />
 
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-          <div className="max-w-7xl mx-auto space-y-6">
+        <main className="flex-1 overflow-y-auto p-4 sm:p-6 xl:p-7">
+          <div className="max-w-[1440px] mx-auto space-y-6">
             {children}
           </div>
         </main>

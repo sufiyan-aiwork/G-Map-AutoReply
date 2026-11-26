@@ -28,24 +28,45 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
+
   const [toastMessage, setToastMessage] = useState(null);
+  const [isToastExiting, setIsToastExiting] = useState(false);
 
   const [showResumeConfirm, setShowResumeConfirm] = useState(false);
   const [isTogglingAutomation, setIsTogglingAutomation] = useState(false);
 
   const isRefreshingRef = useRef(false);
   const isSyncingRef = useRef(false);
-  const toastTimerRef = useRef(null);
+  const toastFadeTimerRef = useRef(null);
+  const toastClearTimerRef = useRef(null);
 
   useEffect(() => {
     isSyncingRef.current = isSyncing;
   }, [isSyncing]);
 
+  const dismissToast = () => {
+    if (toastFadeTimerRef.current) clearTimeout(toastFadeTimerRef.current);
+    if (toastClearTimerRef.current) clearTimeout(toastClearTimerRef.current);
+    setIsToastExiting(true);
+    toastClearTimerRef.current = setTimeout(() => {
+      setToastMessage(null);
+      setIsToastExiting(false);
+    }, 180);
+  };
+
   const showToast = (type, text, duration = 5000) => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+    if (toastFadeTimerRef.current) clearTimeout(toastFadeTimerRef.current);
+    if (toastClearTimerRef.current) clearTimeout(toastClearTimerRef.current);
+    setIsToastExiting(false);
     setToastMessage({ type, text });
     if (duration > 0) {
-      toastTimerRef.current = setTimeout(() => setToastMessage(null), duration);
+      toastFadeTimerRef.current = setTimeout(() => {
+        setIsToastExiting(true);
+        toastClearTimerRef.current = setTimeout(() => {
+          setToastMessage(null);
+          setIsToastExiting(false);
+        }, 180);
+      }, duration);
     }
   };
 
@@ -87,11 +108,12 @@ export default function App() {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setAdminUser(null);
-      setSessionNotice('Your session has expired or is unauthorized. Please sign in again.');
+      setSessionNotice('Your administrator session expired or was signed out. Please sign in again.');
     });
 
     const params = new URLSearchParams(window.location.search);
     const authStatus = params.get('google_auth');
+
     if (authStatus === 'success') {
       const acc = params.get('account') || '';
       const loc = params.get('location') || '';
@@ -136,7 +158,8 @@ export default function App() {
 
     return () => {
       setUnauthorizedHandler(null);
-      if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
+      if (toastFadeTimerRef.current) clearTimeout(toastFadeTimerRef.current);
+      if (toastClearTimerRef.current) clearTimeout(toastClearTimerRef.current);
     };
   }, []);
 
@@ -209,11 +232,9 @@ export default function App() {
   const handleToggleAutomation = async () => {
     const currentlyEnabled = automationStatus?.auto_reply_enabled ?? false;
     if (!currentlyEnabled) {
-      // Require confirmation before activating live automatic publishing to Google
       setShowResumeConfirm(true);
       return;
     }
-    // Pausing executes immediately without confirmation delay
     await executeToggleAutomation(false);
   };
 
@@ -258,7 +279,7 @@ export default function App() {
       success: { bg: 'bg-emerald-50 border-emerald-200 text-emerald-900', Icon: CheckCircle2, iconColor: 'text-emerald-600' },
       warning: { bg: 'bg-amber-50 border-amber-200 text-amber-900', Icon: AlertTriangle, iconColor: 'text-amber-600' },
       error: { bg: 'bg-rose-50 border-rose-200 text-rose-900', Icon: AlertCircle, iconColor: 'text-rose-600' },
-      info: { bg: 'bg-blue-50 border-blue-200 text-blue-900', Icon: Info, iconColor: 'text-blue-600' },
+      info: { bg: 'bg-[#e8f1f8] border-[#b9d7ef] text-[#001f3f]', Icon: Info, iconColor: 'text-[#025091]' },
     };
     const cfg = styleMap[toastMessage.type] || styleMap.info;
     const Icon = cfg.Icon;
@@ -266,7 +287,10 @@ export default function App() {
     return (
       <div
         role="status"
-        className={`mb-5 p-4 rounded-xl border flex items-center justify-between gap-3 text-sm font-medium shadow-sm page-enter ${cfg.bg}`}
+        aria-live="polite"
+        className={`mb-5 p-4 rounded-2xl border flex items-center justify-between gap-3 text-sm font-medium shadow-tz-card ${
+          isToastExiting ? 'toast-exit' : 'toast-enter'
+        } ${cfg.bg}`}
       >
         <div className="flex items-center gap-2.5">
           <Icon size={18} className={`shrink-0 ${cfg.iconColor}`} />
@@ -274,9 +298,9 @@ export default function App() {
         </div>
         <button
           type="button"
-          onClick={() => setToastMessage(null)}
+          onClick={dismissToast}
           aria-label="Dismiss notification"
-          className="p-1 rounded-lg hover:bg-black/5 transition-colors shrink-0"
+          className="p-1 rounded-lg hover:bg-black/5 transition-colors duration-150 shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40"
         >
           <X size={16} />
         </button>
@@ -346,10 +370,10 @@ export default function App() {
 
   if (!authChecked) {
     return (
-      <div className="min-h-screen bg-[#f4f7fb] flex items-center justify-center font-sans">
+      <div className="min-h-screen bg-[#f6f9fc] flex items-center justify-center font-sans">
         <div className="flex flex-col items-center gap-3">
-          <div className="w-9 h-9 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
-          <p className="text-xs font-semibold text-navy-800">Verifying administrator session...</p>
+          <div className="w-9 h-9 border-4 border-[#025091] border-t-transparent rounded-full animate-spin" />
+          <p className="text-xs font-semibold text-[#001f3f]">Verifying administrator session...</p>
         </div>
       </div>
     );
@@ -370,14 +394,14 @@ export default function App() {
       onSyncReviews={handleSyncReviews}
       isRefreshing={isRefreshing}
       isSyncing={isSyncing}
-      businessName={summary?.business_name || 'Techzone Academy'}
+      businessName={summary?.business_name || 'TechZone Academy'}
       adminUser={adminUser}
       onLogout={handleLogout}
     >
       {renderToast()}
 
       {errorMessage && (
-        <div className="mb-5 p-4 rounded-xl bg-rose-50 border border-rose-200 text-rose-800 text-sm flex items-center justify-between gap-4">
+        <div className="mb-5 p-4 rounded-2xl bg-rose-50 border border-rose-200 text-rose-800 text-sm flex items-center justify-between gap-4 shadow-tz-card page-enter">
           <div className="flex items-center gap-2.5">
             <AlertCircle size={18} className="text-rose-600 shrink-0" />
             <span>{errorMessage}</span>
@@ -385,7 +409,7 @@ export default function App() {
           <button
             type="button"
             onClick={() => loadData(false)}
-            className="px-3.5 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-900 rounded-lg font-semibold text-xs transition-colors shrink-0"
+            className="px-3.5 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-900 rounded-xl font-semibold text-xs transition-all duration-150 active:scale-[0.98] shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-500/40"
           >
             Retry
           </button>

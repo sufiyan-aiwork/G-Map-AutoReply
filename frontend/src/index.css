@@ -3,12 +3,54 @@
 @tailwind utilities;
 
 @layer base {
+  html,
   body {
     margin: 0;
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-    background-color: #f4f7fb;
-    color: #0f172a;
+    font-family: 'Inter', ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: #f6f9fc;
+    color: #1a1a2e;
+    scrollbar-width: thin;
+    scrollbar-color: #94b5d6 #ffffff;
   }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: 'Space Grotesk', 'Inter', ui-sans-serif, system-ui, sans-serif;
+  }
+
+  ::-webkit-scrollbar {
+    width: 7px;
+    height: 7px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: #ffffff;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: #94b5d6;
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: #025091;
+  }
+}
+
+.tz-login-backdrop {
+  background-color: #001f3f;
+  background-image:
+    radial-gradient(rgba(0, 210, 255, 0.14) 1px, transparent 1px),
+    radial-gradient(circle at 12% 18%, rgba(0, 210, 255, 0.18) 0%, transparent 45%),
+    radial-gradient(circle at 88% 82%, rgba(2, 80, 145, 0.45) 0%, transparent 55%),
+    linear-gradient(135deg, #00142b 0%, #001f3f 52%, #025091 100%);
+  background-size: 28px 28px, 100% 100%, 100% 100%, 100% 100%;
+}
+
+.tz-top-accent {
+  background: linear-gradient(90deg, #025091 0%, #00d2ff 50%, #025091 100%);
 }
 
 @keyframes pageFadeIn {
@@ -33,14 +75,93 @@
   }
 }
 
+@keyframes dropdownOpen {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toastSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes toastFadeOut {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+}
+
+@keyframes skeletonShimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
 .page-enter {
-  animation: pageFadeIn 180ms ease-out forwards;
+  animation: pageFadeIn 190ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .modal-enter {
-  animation: modalScaleIn 160ms ease-out forwards;
+  animation: modalScaleIn 180ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.dropdown-enter {
+  animation: dropdownOpen 150ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.toast-enter {
+  animation: toastSlideIn 200ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.toast-exit {
+  animation: toastFadeOut 180ms ease-in forwards;
+}
+
+.skeleton-shimmer {
+  background: linear-gradient(90deg, #e8eef5 25%, #f5f8fc 50%, #e8eef5 75%);
+  background-size: 200% 100%;
+  animation: skeletonShimmer 1.6s infinite linear;
 }
 
 .tabular-nums {
   font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .page-enter,
+  .modal-enter,
+  .dropdown-enter,
+  .toast-enter,
+  .toast-exit,
+  .skeleton-shimmer {
+    animation: none !important;
+    transform: none !important;
+  }
+
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -7,9 +7,9 @@ import {
   Sliders,
   History,
   Globe2,
-  GraduationCap,
   X
 } from 'lucide-react';
+import BrandLogo from './BrandLogo';
 
 export default function Sidebar({
   currentTab,
@@ -35,7 +35,7 @@ export default function Sidebar({
       {isOpen && (
         <div
           onClick={onClose}
-          className="fixed inset-0 z-40 bg-navy-950/60 backdrop-blur-sm lg:hidden transition-opacity"
+          className="fixed inset-0 z-40 bg-[#00142b]/65 backdrop-blur-sm lg:hidden transition-opacity duration-200"
           aria-hidden="true"
         />
       )}
@@ -43,19 +43,24 @@ export default function Sidebar({
       {/* Sidebar Container */}
       <aside
         aria-label="Primary Navigation"
-        className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-navy-900 text-slate-300 flex flex-col shrink-0 min-h-screen border-r border-navy-800 transition-transform duration-300 ease-in-out ${
+        className={`fixed lg:static inset-y-0 left-0 z-50 w-64 bg-[#001f3f] text-slate-200 flex flex-col shrink-0 min-h-screen border-r border-[#012b55] transition-transform duration-200 ease-out ${
           isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
-        {/* Brand Header */}
-        <div className="h-16 flex items-center justify-between px-5 border-b border-navy-800">
+        {/* Top TechZone Accent Line */}
+        <div className="h-1 w-full tz-top-accent shrink-0" />
+
+        {/* Brand Header with Dedicated Official Logo Slot */}
+        <div className="h-16 flex items-center justify-between px-4 border-b border-[#012b55]">
           <div className="flex items-center gap-3 min-w-0">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-blue-600 to-blue-400 flex items-center justify-center text-white shadow-md shadow-blue-600/30 shrink-0">
-              <GraduationCap size={20} />
-            </div>
+            <BrandLogo size="md" surface="dark" />
             <div className="min-w-0">
-              <h1 className="text-sm font-bold text-white tracking-tight truncate">Techzone Academy</h1>
-              <p className="text-[10px] text-blue-300 font-semibold tracking-wider uppercase">Review Automation</p>
+              <h1 className="font-heading text-sm font-bold text-white tracking-tight truncate">
+                TechZone Academy
+              </h1>
+              <p className="text-[10px] text-[#00d2ff]/90 font-semibold tracking-wider uppercase truncate">
+                Review Automation
+              </p>
             </div>
           </div>
 
@@ -63,7 +68,7 @@ export default function Sidebar({
             type="button"
             onClick={onClose}
             aria-label="Close navigation menu"
-            className="lg:hidden text-slate-400 hover:text-white p-1.5 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400"
+            className="lg:hidden text-slate-300 hover:text-white hover:bg-[#012b55] p-1.5 rounded-lg transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00d2ff]/60"
           >
             <X size={18} />
           </button>
@@ -71,7 +76,7 @@ export default function Sidebar({
 
         {/* Navigation */}
         <nav className="flex-1 px-3 py-5 space-y-1 overflow-y-auto">
-          <div className="px-3 mb-2 text-[10px] font-bold text-blue-300/70 uppercase tracking-widest">
+          <div className="px-3 mb-2.5 text-[10px] font-bold text-sky-200/60 uppercase tracking-widest">
             Workspace
           </div>
           {menuItems.map((item) => {
@@ -86,13 +91,24 @@ export default function Sidebar({
                   if (onClose) onClose();
                 }}
                 aria-current={isActive ? 'page' : undefined}
-                className={`w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400 ${
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-150 text-left active:scale-[0.99] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00d2ff]/60 ${
                   isActive
-                    ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-950/40'
-                    : 'text-slate-300 hover:text-white hover:bg-navy-800/80'
+                    ? 'bg-[#025091] text-white font-semibold shadow-md shadow-[#00142b]/50'
+                    : 'text-slate-300 hover:text-white hover:bg-[#012b55]'
                 }`}
               >
-                <Icon size={18} className={isActive ? 'text-white shrink-0' : 'text-blue-300/70 shrink-0'} />
+                <span
+                  className={`w-1 h-4 rounded-full shrink-0 transition-colors duration-150 ${
+                    isActive ? 'bg-[#00d2ff]' : 'bg-transparent'
+                  }`}
+                  aria-hidden="true"
+                />
+                <Icon
+                  size={17}
+                  className={`shrink-0 transition-colors duration-150 ${
+                    isActive ? 'text-white' : 'text-sky-200/75'
+                  }`}
+                />
                 <span className="truncate">{item.label}</span>
               </button>
             );
@@ -100,29 +116,24 @@ export default function Sidebar({
         </nav>
 
         {/* Live Automation Status Footer */}
-        <div className="p-4 border border-navy-700/80 m-3 rounded-xl bg-navy-800/70">
-          <div className="flex items-center justify-between mb-1.5">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-2.5 w-2.5">
-                {autoReplyEnabled && (
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                )}
-                <span
-                  className={`relative inline-flex rounded-full h-2.5 w-2.5 ${
-                    autoReplyEnabled ? 'bg-emerald-400' : 'bg-amber-400'
-                  }`}
-                ></span>
-              </span>
-              <span className="text-xs font-semibold text-white">
+        <div className="p-3.5 border border-[#025091]/40 m-3 rounded-xl bg-[#012b55]/90">
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <span
+                className={`inline-block w-2 h-2 rounded-full shrink-0 ${
+                  autoReplyEnabled ? 'bg-emerald-400' : 'bg-amber-400'
+                }`}
+              />
+              <span className="text-xs font-semibold text-white truncate">
                 {autoReplyEnabled ? 'Auto-Reply Active' : 'Auto-Reply Paused'}
               </span>
             </div>
-            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-navy-900 text-blue-300 font-semibold border border-navy-700">
+            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-[#001f3f] text-[#00d2ff] font-semibold border border-[#025091]/60 shrink-0 tabular-nums">
               {pollingInterval}m
             </span>
           </div>
-          <p className="text-[11px] text-slate-400 leading-snug">
-            Rule: 3–5★ Positive, 1–2★ Negative
+          <p className="text-[11px] text-slate-300/80 leading-snug">
+            Rule: 3–5★ Positive · 1–2★ Negative
           </p>
         </div>
       </aside>

@@ -13,9 +13,8 @@ export default function StatusBadge({ status = 'pending' }) {
       case 'verification_pending':
         return 'bg-sky-50 text-sky-700 border-sky-200';
       case 'processed':
-        return 'bg-blue-50 text-blue-700 border-blue-200';
+        return 'bg-[#e8f1f8] text-[#025091] border-[#b9d7ef]';
       case 'pending':
-        return 'bg-amber-50 text-amber-800 border-amber-200';
       case 'paused':
       case 'warning':
         return 'bg-amber-50 text-amber-800 border-amber-200';
@@ -26,7 +25,7 @@ export default function StatusBadge({ status = 'pending' }) {
         return 'bg-rose-50 text-rose-700 border-rose-200';
       case 'info':
       default:
-        return 'bg-slate-100 text-slate-700 border-slate-200';
+        return 'bg-slate-100 text-[#1a1a2e] border-[#e2e8f0]';
     }
   };
 
@@ -42,8 +41,10 @@ export default function StatusBadge({ status = 'pending' }) {
   };
 
   return (
-    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border whitespace-nowrap ${getStyle()}`}>
-      <span className="w-1.5 h-1.5 rounded-full mr-1.5 bg-current opacity-80"></span>
+    <span
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold border whitespace-nowrap ${getStyle()}`}
+    >
+      <span className="w-1.5 h-1.5 rounded-full mr-1.5 bg-current opacity-85" />
       {getLabel()}
     </span>
   );
