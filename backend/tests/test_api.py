@@ -11,13 +11,38 @@ from app.main import app
 from app.services.admin_auth_service import AdminAuthService
 
 
+@pytest.fixture(autouse=True)
+def isolate_supabase_writes():
+    orig_mode = db._isolated_test_mode
+    orig_cfg = dict(db._business_config)
+    orig_reviews = [dict(r) for r in db._reviews]
+    orig_pubs = [dict(p) for p in db._published_replies]
+    db._isolated_test_mode = True
+    yield
+    db._isolated_test_mode = orig_mode
+    db._business_config = orig_cfg
+    db._reviews = orig_reviews
+    db._published_replies = orig_pubs
+
+
 async def _auth_cookies():
     admin = await db.create_admin_user(
         "test_api_suite_admin",
         AdminAuthService.hash_password("TestSuitePass!123"),
     )
     token, _ = AdminAuthService.create_session_token(admin)
-    return {settings.ADMIN_COOKIE_NAME: token}
+    csrf = AdminAuthService.derive_csrf_token(token)
+    return {settings.ADMIN_COOKIE_NAME: token}, {"X-CSRF-Token": csrf}
+
+
+async def _new_client():
+    cookies, headers = await _auth_cookies()
+    return AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        cookies=cookies,
+        headers=headers,
+    )
 
 
 @pytest.mark.asyncio
@@ -31,7 +56,7 @@ async def test_health_endpoint():
 
 @pytest.mark.asyncio
 async def test_dashboard_summary_endpoint():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=await _auth_cookies()) as ac:
+    async with await _new_client() as ac:
         response = await ac.get("/api/dashboard/summary")
     assert response.status_code == 200
     data = response.json()
@@ -43,7 +68,7 @@ async def test_dashboard_summary_endpoint():
 
 @pytest.mark.asyncio
 async def test_reviews_list_and_filter():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=await _auth_cookies()) as ac:
+    async with await _new_client() as ac:
         # Fetch all
         res_all = await ac.get("/api/reviews")
         assert res_all.status_code == 200
@@ -58,7 +83,7 @@ async def test_reviews_list_and_filter():
 
 @pytest.mark.asyncio
 async def test_simulate_reviews_all_five_ratings():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=await _auth_cookies()) as ac:
+    async with await _new_client() as ac:
         await ac.post("/api/automation/resume")
         try:
             for stars in [5, 4, 3, 2, 1]:
@@ -75,6 +100,7 @@ async def test_simulate_reviews_all_five_ratings():
                 publish_result = body["publish_result"]
                 
                 assert review["star_rating"] == stars
+                assert publish_result["dry_run"] is True
                 if stars in [3, 4, 5]:
                     assert publish_result["category"] == "positive"
                     assert "Thank you" in publish_result["reply_text"]
@@ -86,7 +112,7 @@ async def test_simulate_reviews_all_five_ratings():
 
 @pytest.mark.asyncio
 async def test_automation_pause_and_resume():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=await _auth_cookies()) as ac:
+    async with await _new_client() as ac:
         # Pause
         res_pause = await ac.post("/api/automation/pause")
         assert res_pause.status_code == 200
@@ -118,7 +144,7 @@ async def test_automation_pause_and_resume():
 
 @pytest.mark.asyncio
 async def test_preview_reply_endpoint():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=await _auth_cookies()) as ac:
+    async with await _new_client() as ac:
         # Get a review
         res = await ac.get("/api/reviews")
         assert res.status_code == 200
@@ -141,86 +167,69 @@ async def test_preview_reply_endpoint():
 
 @pytest.mark.asyncio
 async def test_preview_reply_not_found():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=await _auth_cookies()) as ac:
+    async with await _new_client() as ac:
         preview_res = await ac.get("/api/reviews/non-existent-id/preview-reply")
         assert preview_res.status_code == 404
 
 @pytest.mark.asyncio
 async def test_publish_single_reply_duplicate_prevention():
-    from unittest.mock import patch, AsyncMock
     from app.integrations.supabase_client import db
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=await _auth_cookies()) as ac:
-        # Create a mock review in memory or query existing
+    async with await _new_client() as ac:
         reviews = await db.get_reviews()
-        if not reviews:
-            pytest.skip("No reviews available for testing")
+        assert len(reviews) > 0
         
         target = reviews[0]
-        # Simulate that it already has a published reply
-        original_status = target.get("publishing_status")
-        original_matched = target.get("matched_reply")
+        target["publishing_status"] = "published"
+        target["matched_reply"] = "Existing reply text"
         
-        try:
-            target["publishing_status"] = "published"
-            target["matched_reply"] = "Existing reply text"
-            
-            res = await ac.post(f"/api/reviews/{target['id']}/publish-reply")
-            assert res.status_code == 409
-            assert "already has a published reply" in res.json()["detail"]
-        finally:
-            target["publishing_status"] = original_status
-            target["matched_reply"] = original_matched
+        res = await ac.post(f"/api/reviews/{target['id']}/publish-reply")
+        assert res.status_code == 409
+        assert "already has a published" in res.json()["detail"].lower()
 
 @pytest.mark.asyncio
 async def test_publish_single_reply_controlled_success():
     from unittest.mock import patch, AsyncMock
     from app.integrations.supabase_client import db
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", cookies=await _auth_cookies()) as ac:
+    async with await _new_client() as ac:
         reviews = await db.get_reviews()
-        if not reviews:
-            pytest.skip("No reviews available for testing")
+        assert len(reviews) > 0
         
         target = reviews[0]
-        original_status = target.get("publishing_status")
-        original_matched = target.get("matched_reply")
-        original_proc = target.get("processing_status")
+        target["publishing_status"] = "pending"
+        target["matched_reply"] = None
+        target["processing_status"] = "pending"
+        target["google_review_id"] = "AbFvO_real_test_001"
+        target["location_id"] = "locations/test_loc_1"
+        target["account_id"] = "accounts/test_acc_1"
         
-        try:
-            target["publishing_status"] = "pending"
-            target["matched_reply"] = None
-            target["processing_status"] = "pending"
-            
-            # Mock google_client.publish_reply and get_review for genuine verified publish
-            with patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub, \
-                 patch("app.services.publishing_service.google_client.get_review", new_callable=AsyncMock) as mock_verify:
-                mock_pub.return_value = {
-                    "success": True,
-                    "http_status": 200,
-                    "review_id": target.get("google_review_id"),
-                    "response": {"comment": "Thank you for sharing your valuable feedback with Techzone Academy!"}
-                }
-                mock_verify.return_value = {
+        with patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub, \
+             patch("app.services.publishing_service.google_client.get_review", new_callable=AsyncMock) as mock_verify:
+            mock_pub.return_value = {
+                "success": True,
+                "http_status": 200,
+                "review_id": target.get("google_review_id"),
+                "response": {"comment": "Thank you for sharing your valuable feedback with Techzone Academy!"}
+            }
+            mock_verify.side_effect = [
+                {"success": True, "has_reply": False},
+                {
                     "success": True,
                     "has_reply": True,
                     "reply_state": "published",
                     "reply_comment": "Thank you for sharing your valuable feedback with Techzone Academy!"
-                }
-                
-                res = await ac.post(f"/api/reviews/{target['id']}/publish-reply")
-                assert res.status_code == 200
-                data = res.json()
-                assert data["success"] is True
-                assert data["result"]["publishing_status"] == "published"
-                assert "published and verified" in data["message"].lower()
-                mock_pub.assert_called_once()
-                mock_verify.assert_called_once()
-        finally:
-            # Restore state
-            target["publishing_status"] = original_status
-            target["matched_reply"] = original_matched
-            target["processing_status"] = original_proc
+                },
+            ]
+            
+            res = await ac.post(f"/api/reviews/{target['id']}/publish-reply")
+            assert res.status_code == 200
+            data = res.json()
+            assert data["success"] is True
+            assert data["result"]["publishing_status"] == "published"
+            assert "published and verified" in data["message"].lower()
+            mock_pub.assert_called_once()
+            assert mock_verify.call_count == 2
 
 @pytest.mark.asyncio
 async def test_disconnected_oauth_cannot_publish():
@@ -230,11 +239,15 @@ async def test_disconnected_oauth_cannot_publish():
     from app.services.publishing_service import PublishingService
 
     reviews = await db.get_reviews()
-    if not reviews:
-        pytest.skip("No reviews available")
+    assert len(reviews) > 0
 
     target = reviews[0]
-    # Ensure google_client is disconnected
+    target["publishing_status"] = "pending"
+    target["matched_reply"] = None
+    target["google_review_id"] = "AbFvO_real_test_002"
+    target["location_id"] = "locations/test_loc_1"
+    target["account_id"] = "accounts/test_acc_1"
+
     orig_access = google_client.access_token
     orig_refresh = google_client.refresh_token
     try:
@@ -259,32 +272,26 @@ async def test_mock_response_cannot_create_published_record():
     from app.services.publishing_service import PublishingService
 
     reviews = await db.get_reviews()
-    if not reviews:
-        pytest.skip("No reviews available")
+    assert len(reviews) > 0
 
     target = reviews[0]
-    original_status = target.get("publishing_status")
-    original_matched = target.get("matched_reply")
+    target["publishing_status"] = "pending"
+    target["matched_reply"] = None
+    target["google_review_id"] = "AbFvO_real_test_003"
+    target["location_id"] = "locations/test_loc_1"
+    target["account_id"] = "accounts/test_acc_1"
 
-    try:
-        target["publishing_status"] = "pending"
-        target["matched_reply"] = None
+    with patch("app.services.publishing_service.google_client.get_review", new_callable=AsyncMock, return_value={"success": True, "has_reply": False}), \
+         patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub:
+        mock_pub.return_value = {
+            "success": True,
+            "comment": "Mock reply",
+            "simulated": True
+        }
 
-        # Simulate a mock fallback returning success=True, simulated=True
-        with patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub:
-            mock_pub.return_value = {
-                "success": True,
-                "comment": "Mock reply",
-                "simulated": True
-            }
-
-            res = await PublishingService.publish_reply_for_review(target, manual_override=True)
-            # Must reject simulation as a published record
-            assert res["success"] is False
-            assert res["publishing_status"] == "failed"
-    finally:
-        target["publishing_status"] = original_status
-        target["matched_reply"] = original_matched
+        res = await PublishingService.publish_reply_for_review(target, manual_override=True)
+        assert res["success"] is False
+        assert res["publishing_status"] == "failed"
 
 @pytest.mark.asyncio
 async def test_verification_pending_when_propagation_delayed():
@@ -293,37 +300,31 @@ async def test_verification_pending_when_propagation_delayed():
     from app.services.publishing_service import PublishingService
 
     reviews = await db.get_reviews()
-    if not reviews:
-        pytest.skip("No reviews available")
+    assert len(reviews) > 0
 
     target = reviews[0]
-    original_status = target.get("publishing_status")
-    original_matched = target.get("matched_reply")
+    target["publishing_status"] = "pending"
+    target["matched_reply"] = None
+    target["google_review_id"] = "AbFvO_real_test_004"
+    target["location_id"] = "locations/test_loc_1"
+    target["account_id"] = "accounts/test_acc_1"
 
-    try:
-        target["publishing_status"] = "pending"
-        target["matched_reply"] = None
+    with patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub, \
+         patch("app.services.publishing_service.google_client.get_review", new_callable=AsyncMock) as mock_verify:
+        mock_pub.return_value = {
+            "success": True,
+            "http_status": 200,
+            "response": {"comment": "Predefined reply"}
+        }
+        mock_verify.return_value = {
+            "success": True,
+            "has_reply": False,
+            "reply_state": "unreplied"
+        }
 
-        # PUT succeeds (200), but GET review does not yet reflect reviewReply
-        with patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub, \
-             patch("app.services.publishing_service.google_client.get_review", new_callable=AsyncMock) as mock_verify:
-            mock_pub.return_value = {
-                "success": True,
-                "http_status": 200,
-                "response": {"comment": "Predefined reply"}
-            }
-            mock_verify.return_value = {
-                "success": True,
-                "has_reply": False,
-                "reply_state": "unreplied"
-            }
-
-            res = await PublishingService.publish_reply_for_review(target, manual_override=True)
-            assert res["success"] is True
-            assert res["publishing_status"] == "verification_pending"
-    finally:
-        target["publishing_status"] = original_status
-        target["matched_reply"] = original_matched
+        res = await PublishingService.publish_reply_for_review(target, manual_override=True)
+        assert res["success"] is True
+        assert res["publishing_status"] == "verification_pending"
 
 @pytest.mark.asyncio
 async def test_policy_violation_marks_failed():
@@ -332,37 +333,35 @@ async def test_policy_violation_marks_failed():
     from app.services.publishing_service import PublishingService
 
     reviews = await db.get_reviews()
-    if not reviews:
-        pytest.skip("No reviews available")
+    assert len(reviews) > 0
 
     target = reviews[0]
-    original_status = target.get("publishing_status")
-    original_matched = target.get("matched_reply")
+    target["publishing_status"] = "pending"
+    target["matched_reply"] = None
+    target["google_review_id"] = "AbFvO_real_test_005"
+    target["location_id"] = "locations/test_loc_1"
+    target["account_id"] = "accounts/test_acc_1"
 
-    try:
-        target["publishing_status"] = "pending"
-        target["matched_reply"] = None
-
-        with patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub, \
-             patch("app.services.publishing_service.google_client.get_review", new_callable=AsyncMock) as mock_verify:
-            mock_pub.return_value = {
-                "success": True,
-                "http_status": 200,
-                "response": {"comment": "Predefined reply"}
-            }
-            mock_verify.return_value = {
+    with patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub, \
+         patch("app.services.publishing_service.google_client.get_review", new_callable=AsyncMock) as mock_verify:
+        mock_pub.return_value = {
+            "success": True,
+            "http_status": 200,
+            "response": {"comment": "Predefined reply"}
+        }
+        mock_verify.side_effect = [
+            {"success": True, "has_reply": False},
+            {
                 "success": True,
                 "policy_violation": "SPAM_CONTENT",
                 "has_reply": False
-            }
+            },
+        ]
 
-            res = await PublishingService.publish_reply_for_review(target, manual_override=True)
-            assert res["success"] is False
-            assert res["publishing_status"] == "failed"
-            assert "policy violation" in res["error"].lower()
-    finally:
-        target["publishing_status"] = original_status
-        target["matched_reply"] = original_matched
+        res = await PublishingService.publish_reply_for_review(target, manual_override=True)
+        assert res["success"] is False
+        assert res["publishing_status"] == "failed"
+        assert "policy violation" in res["error"].lower()
 
 @pytest.mark.asyncio
 async def test_http_errors_recorded_correctly():
@@ -371,31 +370,29 @@ async def test_http_errors_recorded_correctly():
     from app.services.publishing_service import PublishingService
 
     reviews = await db.get_reviews()
-    if not reviews:
-        pytest.skip("No reviews available")
+    assert len(reviews) > 0
 
     target = reviews[0]
-    original_status = target.get("publishing_status")
-    original_matched = target.get("matched_reply")
+    target["publishing_status"] = "pending"
+    target["matched_reply"] = None
+    target["google_review_id"] = "AbFvO_real_test_006"
+    target["location_id"] = "locations/test_loc_1"
+    target["account_id"] = "accounts/test_acc_1"
 
-    try:
+    for code in [401, 403, 404, 429, 500]:
         target["publishing_status"] = "pending"
         target["matched_reply"] = None
+        with patch("app.services.publishing_service.google_client.get_review", new_callable=AsyncMock, return_value={"success": True, "has_reply": False}), \
+             patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub:
+            mock_pub.return_value = {
+                "success": False,
+                "http_status": code,
+                "error": f"Google API error HTTP {code}"
+            }
 
-        for code in [401, 403, 404, 429, 500]:
-            with patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_pub:
-                mock_pub.return_value = {
-                    "success": False,
-                    "http_status": code,
-                    "error": f"Google API error {code}: Mock error"
-                }
-
-                res = await PublishingService.publish_reply_for_review(target, manual_override=True)
-                assert res["success"] is False
-                assert res["publishing_status"] == "failed"
-                assert str(code) in res["error"]
-    finally:
-        target["publishing_status"] = original_status
-        target["matched_reply"] = original_matched
+            res = await PublishingService.publish_reply_for_review(target, manual_override=True)
+            assert res["success"] is False
+            assert res["publishing_status"] == "failed"
+            assert str(code) in res["error"]
 
 

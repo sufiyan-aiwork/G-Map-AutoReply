@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # API & Server Config
     PORT: int = 8000
     HOST: str = "0.0.0.0"
+    FRONTEND_URL: str = "http://localhost:5174"
+    MAX_REQUEST_BODY_BYTES: int = 1_048_576  # 1 MB request payload limit
+    TRUSTED_PROXY_IPS: List[str] = []
     CORS_ORIGINS: List[str] = [
         "http://localhost:5173",
         "http://localhost:5174",
@@ -42,6 +45,7 @@ class Settings(BaseSettings):
     GOOGLE_REDIRECT_URI: Optional[str] = "http://localhost:8000/api/auth/google/callback"
     GOOGLE_ACCOUNT_ID: Optional[str] = None
     GOOGLE_LOCATION_ID: Optional[str] = None
+    GOOGLE_TOKEN_ENCRYPTION_KEY: Optional[str] = None
     
     # Automation Defaults
     DEFAULT_POLLING_INTERVAL: int = 15  # in minutes

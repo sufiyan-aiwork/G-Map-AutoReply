@@ -5,20 +5,28 @@ review retrieval with star rating parsing, and automated reply publishing with b
 Includes high-fidelity test/sandbox mode when credentials are not yet configured in .env.
 """
 
+import base64
+import binascii
+import subprocess
 import sys
+import tempfile
 import httpx
 import asyncio
 import logging
 import os
 import json
+import secrets
 from typing import Dict, Any, List, Optional, Tuple
 from urllib.parse import urlencode
 from datetime import datetime, timezone
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from ..config import settings
 
 logger = logging.getLogger("google_business")
 
 TOKEN_FILE = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".google_tokens.json")
+_TOKEN_AAD = b"techzone-gbp-oauth-tokens-v1"
+_SIMULATED_REVIEW_PREFIXES = ("sim_", "mock_", "g_sync_", "AbFvO_sample_")
 
 GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
@@ -37,13 +45,14 @@ STAR_RATING_MAP = {
 }
 
 class GoogleBusinessProfileClient:
-    def __init__(self):
+    def __init__(self, token_file: Optional[str] = None):
         self.client_id = settings.GOOGLE_CLIENT_ID
         self.client_secret = settings.GOOGLE_CLIENT_SECRET
         self.redirect_uri = settings.GOOGLE_REDIRECT_URI
         self.account_id = settings.GOOGLE_ACCOUNT_ID
         self.location_id = settings.GOOGLE_LOCATION_ID
-        
+        self._token_file = token_file or TOKEN_FILE
+
         # In-memory runtime tokens (backend only, never exposed to client)
         self.access_token: Optional[str] = None
         self.refresh_token: Optional[str] = None
@@ -54,48 +63,181 @@ class GoogleBusinessProfileClient:
         # Load persisted tokens if available
         self._load_tokens_from_file()
 
-    def _load_tokens_from_file(self):
-        """Loads securely saved Google OAuth tokens and IDs from local backend file if present."""
-        try:
-            if os.path.exists(TOKEN_FILE):
-                with open(TOKEN_FILE, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    self.access_token = data.get("access_token")
-                    self.refresh_token = data.get("refresh_token")
-                    if data.get("account_id") and not self.account_id:
-                        self.account_id = data.get("account_id")
-                    if data.get("location_id") and not self.location_id:
-                        self.location_id = data.get("location_id")
-        except Exception as e:
-            logger.warning(f"Could not load stored Google tokens: {e}")
+    @staticmethod
+    def _decode_encryption_key() -> Optional[bytes]:
+        raw = (settings.GOOGLE_TOKEN_ENCRYPTION_KEY or "").strip()
+        if not raw or raw.startswith("replace-with-"):
+            return None
+        padded = raw + "=" * (-len(raw) % 4)
+        for decoder in (base64.urlsafe_b64decode, base64.b64decode):
+            try:
+                key_bytes = decoder(padded.encode("ascii"))
+                if len(key_bytes) == 32:
+                    return key_bytes
+            except (binascii.Error, ValueError, UnicodeEncodeError):
+                continue
+        raise ValueError("GOOGLE_TOKEN_ENCRYPTION_KEY must be a base64-encoded 32-byte key.")
 
-    def _save_tokens_to_file(self):
-        """Persists active Google OAuth tokens and discovered IDs into local backend file."""
+    @classmethod
+    def _encrypt_token_payload(cls, payload: Dict[str, Any]) -> Dict[str, Any]:
+        key_bytes = cls._decode_encryption_key()
+        if not key_bytes:
+            raise ValueError("GOOGLE_TOKEN_ENCRYPTION_KEY is not configured.")
+        nonce = secrets.token_bytes(12)
+        plaintext = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        ct = AESGCM(key_bytes).encrypt(nonce, plaintext, _TOKEN_AAD)
+        return {
+            "encrypted": True,
+            "v": 1,
+            "alg": "AES-256-GCM",
+            "nonce": base64.urlsafe_b64encode(nonce).rstrip(b"=").decode("ascii"),
+            "ciphertext": base64.urlsafe_b64encode(ct).rstrip(b"=").decode("ascii"),
+        }
+
+    @classmethod
+    def _decrypt_token_payload(cls, envelope: Dict[str, Any]) -> Dict[str, Any]:
+        key_bytes = cls._decode_encryption_key()
+        if not key_bytes:
+            raise ValueError("GOOGLE_TOKEN_ENCRYPTION_KEY is required to decrypt stored OAuth tokens.")
+        if envelope.get("alg") != "AES-256-GCM" or int(envelope.get("v", 0)) != 1:
+            raise ValueError("Unsupported token encryption envelope version or algorithm.")
+        nonce_str = str(envelope.get("nonce") or "")
+        ct_str = str(envelope.get("ciphertext") or "")
+        nonce = base64.urlsafe_b64decode(nonce_str + "=" * (-len(nonce_str) % 4))
+        ct = base64.urlsafe_b64decode(ct_str + "=" * (-len(ct_str) % 4))
+        plaintext = AESGCM(key_bytes).decrypt(nonce, ct, _TOKEN_AAD)
+        data = json.loads(plaintext.decode("utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("Decrypted token payload is invalid.")
+        return data
+
+    def _load_tokens_from_file(self):
+        """Loads persisted Google OAuth tokens, decrypting AES-256-GCM envelopes or migrating plaintext cleanly."""
+        try:
+            if not os.path.exists(self._token_file):
+                return
+            with open(self._token_file, "r", encoding="utf-8") as f:
+                raw_data = json.load(f)
+
+            if not isinstance(raw_data, dict):
+                logger.warning("Stored Google token file has invalid format; ignoring.")
+                return
+
+            was_plaintext = not bool(raw_data.get("encrypted"))
+            if raw_data.get("encrypted") is True:
+                data = self._decrypt_token_payload(raw_data)
+            else:
+                data = raw_data
+
+            self.access_token = data.get("access_token")
+            self.refresh_token = data.get("refresh_token")
+            if data.get("account_id") and not self.account_id:
+                self.account_id = data.get("account_id")
+            if data.get("location_id") and not self.location_id:
+                self.location_id = data.get("location_id")
+
+            # Transparently migrate existing plaintext tokens to AES-256-GCM without invalidating credentials
+            if (
+                was_plaintext
+                and not getattr(self, "_isolated_test_mode", False)
+                and "pytest" not in sys.modules
+                and (self.access_token or self.refresh_token)
+            ):
+                try:
+                    if self._decode_encryption_key():
+                        self._save_tokens_to_file(force_write=True)
+                except Exception:
+                    logger.warning("Unable to auto-migrate plaintext OAuth tokens at startup; check GOOGLE_TOKEN_ENCRYPTION_KEY.")
+        except Exception:
+            logger.warning("Could not load stored Google OAuth tokens safely.")
+
+    def _save_tokens_to_file(self, force_write: bool = False):
+        """Atomically persists Google OAuth tokens encrypted with AES-256-GCM."""
+        tmp_path: Optional[str] = None
         try:
             if getattr(self, "_isolated_test_mode", False):
                 return
-            if self.has_credentials and (self.access_token or self.refresh_token):
-                data = {
-                    "access_token": self.access_token,
-                    "refresh_token": self.refresh_token,
-                    "account_id": self.account_id,
-                    "location_id": self.location_id,
-                    "updated_at": datetime.now(timezone.utc).isoformat()
-                }
-                with open(TOKEN_FILE, "w", encoding="utf-8") as f:
-                    json.dump(data, f, indent=2)
+            if not (force_write or (self.has_credentials and (self.access_token or self.refresh_token))):
+                return
+
+            payload = {
+                "access_token": self.access_token,
+                "refresh_token": self.refresh_token,
+                "account_id": self.account_id,
+                "location_id": self.location_id,
+                "updated_at": datetime.now(timezone.utc).isoformat(),
+            }
+
+            key_bytes = self._decode_encryption_key()
+            if key_bytes:
+                to_write = self._encrypt_token_payload(payload)
+            else:
+                if settings.ENVIRONMENT.lower() == "production":
+                    raise ValueError("Refusing to persist unencrypted OAuth tokens in production without GOOGLE_TOKEN_ENCRYPTION_KEY.")
+                logger.warning("GOOGLE_TOKEN_ENCRYPTION_KEY is not set; persisting OAuth tokens unencrypted in development.")
+                to_write = payload
+
+            target_dir = os.path.dirname(os.path.abspath(self._token_file)) or "."
+            os.makedirs(target_dir, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                mode="w",
+                encoding="utf-8",
+                dir=target_dir,
+                prefix=".google_tokens.",
+                suffix=".tmp",
+                delete=False,
+            ) as tmp:
+                tmp_path = tmp.name
+                json.dump(to_write, tmp, indent=2)
+                tmp.flush()
+                os.fsync(tmp.fileno())
+
+            try:
+                os.chmod(tmp_path, 0o600)
+            except OSError:
+                pass
+            if os.name == "nt" and "pytest" not in sys.modules:
+                try:
+                    domain = os.environ.get("USERDOMAIN", "")
+                    user = os.environ.get("USERNAME", "")
+                    principal = f"{domain}\\{user}" if domain and user else user
+                    if principal:
+                        subprocess.run(
+                            [
+                                "icacls",
+                                tmp_path,
+                                "/inheritance:r",
+                                "/grant:r",
+                                f"{principal}:(F)",
+                                "NT AUTHORITY\\SYSTEM:(F)",
+                                "BUILTIN\\Administrators:(F)",
+                            ],
+                            check=False,
+                            capture_output=True,
+                            timeout=5,
+                        )
+                except Exception:
+                    pass
+            os.replace(tmp_path, self._token_file)
+            tmp_path = None
         except Exception as e:
-            logger.warning(f"Could not save Google tokens to file: {e}")
+            logger.error(f"Could not persist Google OAuth tokens safely: {type(e).__name__}")
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
     def _clear_tokens_file(self):
         """Deletes persisted Google OAuth tokens on disconnect (guarded against test suite erasure)."""
         try:
             if getattr(self, "_isolated_test_mode", False) or "pytest" in sys.modules:
                 return
-            if os.path.exists(TOKEN_FILE):
-                os.remove(TOKEN_FILE)
+            if os.path.exists(self._token_file):
+                os.remove(self._token_file)
         except Exception as e:
-            logger.warning(f"Could not clear Google tokens file: {e}")
+            logger.warning(f"Could not clear Google tokens file: {type(e).__name__}")
 
     @property
     def has_credentials(self) -> bool:
@@ -161,19 +303,19 @@ class GoogleBusinessProfileClient:
         async with httpx.AsyncClient(timeout=10.0) as client:
             resp = await client.post(GOOGLE_TOKEN_URL, data=payload)
             if resp.status_code != 200:
-                logger.error(f"Failed to exchange Google OAuth code: {resp.text}")
-                raise Exception(f"Google OAuth token exchange failed: {resp.text}")
+                logger.error(f"Failed to exchange Google OAuth code (HTTP {resp.status_code}).")
+                raise Exception(f"Google OAuth token exchange failed (HTTP {resp.status_code}).")
             
             data = resp.json()
             self.access_token = data.get("access_token")
-            if "refresh_token" in data:
+            if data.get("refresh_token"):
                 self.refresh_token = data.get("refresh_token")
             self.last_sync_at = datetime.now(timezone.utc).isoformat()
             self._save_tokens_to_file()
             return data
 
     async def refresh_access_token(self) -> Optional[str]:
-        """Refreshes the OAuth access token using the stored refresh token."""
+        """Refreshes the OAuth access token using the stored refresh token, handling rotated refresh tokens."""
         if not self.refresh_token:
             return None
 
@@ -192,11 +334,14 @@ class GoogleBusinessProfileClient:
             resp = await client.post(GOOGLE_TOKEN_URL, data=payload)
             if resp.status_code == 200:
                 data = resp.json()
-                self.access_token = data.get("access_token")
+                if data.get("access_token"):
+                    self.access_token = data["access_token"]
+                if data.get("refresh_token"):
+                    self.refresh_token = data["refresh_token"]
                 self._save_tokens_to_file()
                 return self.access_token
             else:
-                logger.error(f"Failed to refresh Google OAuth access token: {resp.text}")
+                logger.error(f"Failed to refresh Google OAuth access token (HTTP {resp.status_code}).")
                 return None
 
     def disconnect(self):
@@ -469,7 +614,7 @@ class GoogleBusinessProfileClient:
         - Strictly returns actual reviews when connected (never returns mock data in live mode)
         """
         # Ensure latest tokens are loaded
-        if not self.access_token and os.path.exists(TOKEN_FILE):
+        if not self.access_token and os.path.exists(self._token_file):
             self._load_tokens_from_file()
 
         # If live credentials exist and we have an active connection
@@ -582,8 +727,17 @@ class GoogleBusinessProfileClient:
         - Only returns success upon genuine HTTP 200/201 response from Google API.
         - Handles token refresh on 401 and exponential backoff on transient 429/5xx errors.
         """
+        # Strict simulator/mock isolation: never publish synthetic review IDs to Google API
+        if str(review_id or "").startswith(_SIMULATED_REVIEW_PREFIXES):
+            logger.warning(f"Blocked attempt to publish reply for simulated review ID '{review_id}'.")
+            return {
+                "success": False,
+                "error": "Simulated or mock review IDs cannot be published to Google Business Profile.",
+                "status": "simulated_blocked",
+            }
+
         # Ensure latest persisted tokens are loaded
-        if not self.access_token and os.path.exists(TOKEN_FILE):
+        if not self.access_token and os.path.exists(self._token_file):
             self._load_tokens_from_file()
 
         # Strict check: Must have live credentials and active connection
@@ -657,21 +811,21 @@ class GoogleBusinessProfileClient:
                         continue
                     else:
                         # Non-retriable 4xx error (400 Bad Request, 403 Forbidden, 404 Review Not Found)
-                        logger.error(f"Non-retriable Google API error {resp.status_code}: {resp.text}")
+                        logger.error(f"Non-retriable Google API error HTTP {resp.status_code} for review {review_id}.")
                         return {
                             "success": False,
                             "http_status": resp.status_code,
-                            "error": f"Google API error {resp.status_code}: {resp.text}",
+                            "error": f"Google API error HTTP {resp.status_code}",
                             "attempts": attempt
                         }
             except Exception as e:
-                last_error = str(e)
+                last_error = type(e).__name__
                 wait_time = (2 ** (attempt - 1))
                 await asyncio.sleep(wait_time)
 
         return {
             "success": False,
-            "error": f"Publishing failed after {max_retries} attempts: {last_error}",
+            "error": f"Publishing failed after {max_retries} attempts ({last_error or 'upstream_error'}).",
             "attempts": max_retries
         }
 
@@ -688,7 +842,7 @@ class GoogleBusinessProfileClient:
         Retrieves a single review from Google Business Profile to verify reviewReply existence and state:
         GET https://mybusiness.googleapis.com/v4/accounts/{accountId}/locations/{locationId}/reviews/{reviewId}
         """
-        if not self.access_token and os.path.exists(TOKEN_FILE):
+        if not self.access_token and os.path.exists(self._token_file):
             self._load_tokens_from_file()
 
         if not self.is_connected():
@@ -733,6 +887,7 @@ class GoogleBusinessProfileClient:
                         "has_reply": bool(reply_obj),
                         "review_reply": reply_obj,
                         "reply_comment": reply_obj.get("comment") if reply_obj else None,
+                        "update_time": reply_obj.get("updateTime") if reply_obj else None,
                         "reply_state": review_data.get("reviewReplyState") or ("published" if reply_obj else "unreplied"),
                         "policy_violation": review_data.get("policyViolation") or (reply_obj.get("policyViolation") if reply_obj else None)
                     }
@@ -740,12 +895,12 @@ class GoogleBusinessProfileClient:
                     return {
                         "success": False,
                         "http_status": resp.status_code,
-                        "error": f"Failed to retrieve review from Google: HTTP {resp.status_code} {resp.text}"
+                        "error": f"Failed to retrieve review from Google: HTTP {resp.status_code}"
                     }
         except Exception as e:
             return {
                 "success": False,
-                "error": f"Network error verifying review with Google: {str(e)}"
+                "error": f"Network error verifying review with Google ({type(e).__name__})."
             }
 
 google_client = GoogleBusinessProfileClient()

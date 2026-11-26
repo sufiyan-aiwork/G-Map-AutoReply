@@ -222,9 +222,11 @@ async def test_logout_clears_cookie_and_revokes_token():
         )
         assert login_res.status_code == 200
         saved_cookie = ac.cookies.get(settings.ADMIN_COOKIE_NAME)
+        csrf_token = login_res.json().get("csrf_token")
         assert saved_cookie
+        assert csrf_token
 
-        logout_res = await ac.post("/api/admin/logout")
+        logout_res = await ac.post("/api/admin/logout", headers={"X-CSRF-Token": csrf_token})
         assert logout_res.status_code == 200
         assert logout_res.json()["authenticated"] is False
 
@@ -391,11 +393,12 @@ async def test_scheduler_independent_of_admin_login_and_logout():
 
             # Admin logs in then logs out -> scheduler must stay running untouched
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-                await ac.post(
+                login_res = await ac.post(
                     "/api/admin/login",
                     json={"username": "test_sched_admin", "password": "SchedPass!123"},
                 )
-                logout_res = await ac.post("/api/admin/logout")
+                csrf = login_res.json().get("csrf_token")
+                logout_res = await ac.post("/api/admin/logout", headers={"X-CSRF-Token": csrf})
                 assert logout_res.status_code == 200
 
             assert SchedulerService._is_running is True

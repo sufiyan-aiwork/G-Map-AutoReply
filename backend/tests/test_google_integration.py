@@ -114,9 +114,10 @@ async def test_api_sync_now_endpoint():
     from app.services.admin_auth_service import AdminAuthService
     admin = await db.create_admin_user("test_google_sync_admin", AdminAuthService.hash_password("TestPass!123"))
     token, _ = AdminAuthService.create_session_token(admin)
+    csrf = AdminAuthService.derive_csrf_token(token)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         ac.cookies.set("tz_admin_session", token)
-        response = await ac.post("/api/reviews/sync-now")
+        response = await ac.post("/api/reviews/sync-now", headers={"X-CSRF-Token": csrf})
     assert response.status_code == 200
     data = response.json()
     assert "summary" in data
@@ -127,6 +128,7 @@ async def test_api_google_status_and_disconnect():
     from app.services.admin_auth_service import AdminAuthService
     admin = await db.create_admin_user("test_google_dc_admin", AdminAuthService.hash_password("TestPass!123"))
     token, _ = AdminAuthService.create_session_token(admin)
+    csrf = AdminAuthService.derive_csrf_token(token)
 
     # Preserve original state of google_client and db config
     orig_access = google_client.access_token
@@ -135,8 +137,10 @@ async def test_api_google_status_and_disconnect():
     orig_loc = google_client.location_id
     orig_is_mock = google_client.is_mock_connected
     orig_db_cfg = dict(db._business_config)
+    orig_iso = db._isolated_test_mode
 
     google_client._isolated_test_mode = True
+    db._isolated_test_mode = True
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             ac.cookies.set("tz_admin_session", token)
@@ -151,11 +155,12 @@ async def test_api_google_status_and_disconnect():
             assert "auth_url" in login_res.json()
 
             # Disconnect
-            dc_res = await ac.post("/api/auth/google/disconnect")
+            dc_res = await ac.post("/api/auth/google/disconnect", headers={"X-CSRF-Token": csrf})
             assert dc_res.status_code == 200
             assert dc_res.json()["status"] == "disconnected"
     finally:
         # Restore real credentials and connection state
+        db._isolated_test_mode = orig_iso
         google_client._isolated_test_mode = False
         google_client.access_token = orig_access
         google_client.refresh_token = orig_refresh

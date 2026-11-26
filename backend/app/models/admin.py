@@ -22,6 +22,7 @@ class AdminSessionResponse(BaseModel):
     authenticated: bool
     admin: AdminUserInfo
     expires_in: Optional[int] = None
+    csrf_token: Optional[str] = None
 
 class AdminLogoutResponse(BaseModel):
     authenticated: bool

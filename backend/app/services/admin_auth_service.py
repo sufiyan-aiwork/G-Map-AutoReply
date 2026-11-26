@@ -51,16 +51,33 @@ class AdminAuthService:
     _revoked_jtis: Dict[str, float] = {}
     _failed_attempts: Dict[str, List[float]] = defaultdict(list)
     _pending_oauth_states: Dict[str, float] = {}
+    _MAX_RATE_LIMIT_KEYS: int = 5000
+
+    @classmethod
+    def validate_runtime_security(cls) -> None:
+        """Fail fast at startup if running in production without a strong signing secret."""
+        if settings.ENVIRONMENT.lower() == "production":
+            configured = (settings.ADMIN_AUTH_SECRET or "").strip()
+            if not configured or configured.startswith("replace-with-") or len(configured) < 32:
+                raise RuntimeError(
+                    "CRITICAL SECURITY CONFIG ERROR: ADMIN_AUTH_SECRET must be set to at least 32 random characters in production."
+                )
 
     @classmethod
     def _get_signing_secret(cls) -> bytes:
         configured = (settings.ADMIN_AUTH_SECRET or "").strip()
+        if configured and not configured.startswith("replace-with-") and len(configured) >= 32:
+            return configured.encode("utf-8")
+        if settings.ENVIRONMENT.lower() == "production":
+            raise RuntimeError(
+                "ADMIN_AUTH_SECRET is missing, placeholder, or shorter than 32 characters in production."
+            )
         if configured and not configured.startswith("replace-with-"):
+            logger.warning("ADMIN_AUTH_SECRET is shorter than 32 characters; upgrade recommended.")
             return configured.encode("utf-8")
         if cls._ephemeral_secret is None:
             cls._ephemeral_secret = secrets.token_urlsafe(48)
-            if settings.ENVIRONMENT.lower() == "production":
-                logger.warning("ADMIN_AUTH_SECRET is not configured in environment; generated ephemeral process key.")
+            logger.warning("ADMIN_AUTH_SECRET is not configured in development; generated ephemeral process key.")
         return cls._ephemeral_secret.encode("utf-8")
 
     # ====================================================================
@@ -127,7 +144,7 @@ class AdminAuthService:
         }
 
     # ====================================================================
-    # HMAC-SHA256 Signed Sessions (8-Hour Expiry + Revocation)
+    # HMAC-SHA256 Signed Sessions (8-Hour Expiry + Revocation + CSRF)
     # ====================================================================
     @classmethod
     def create_session_token(
@@ -157,6 +174,30 @@ class AdminAuthService:
         return token, ttl_seconds
 
     @classmethod
+    def derive_csrf_token(cls, token_or_payload: Any) -> Optional[str]:
+        """Derives a deterministic session-bound CSRF token using HMAC-SHA256."""
+        if isinstance(token_or_payload, str):
+            payload = cls.decode_and_verify_token(token_or_payload)
+        elif isinstance(token_or_payload, dict):
+            payload = token_or_payload
+        else:
+            payload = None
+        if not payload or not payload.get("jti") or not payload.get("sub"):
+            return None
+        msg = f"csrf:{payload['jti']}:{payload['sub']}".encode("utf-8")
+        digest = hmac.new(cls._get_signing_secret(), msg, hashlib.sha256).digest()
+        return _b64url_encode(digest)
+
+    @classmethod
+    def verify_csrf_token(cls, token_or_payload: Any, provided_csrf: Optional[str]) -> bool:
+        if not provided_csrf:
+            return False
+        expected = cls.derive_csrf_token(token_or_payload)
+        if not expected:
+            return False
+        return hmac.compare_digest(expected, provided_csrf.strip())
+
+    @classmethod
     def _prune_revoked_jtis(cls, now_ts: float) -> None:
         expired = [jti for jti, exp in cls._revoked_jtis.items() if exp <= now_ts]
         for jti in expired:
@@ -164,7 +205,7 @@ class AdminAuthService:
 
     @classmethod
     def decode_and_verify_token(cls, token: str) -> Optional[Dict[str, Any]]:
-        """Verifies HMAC-SHA256 signature, expiration, and revocation status."""
+        """Verifies HMAC-SHA256 signature, expiration, and local revocation status."""
         if not token or token.count(".") != 2:
             return None
         try:
@@ -199,15 +240,27 @@ class AdminAuthService:
 
     @classmethod
     def revoke_session_token(cls, token: Optional[str]) -> None:
-        """Revokes an active session token immediately upon logout."""
+        """Revokes an active session token immediately in process memory."""
         if not token:
             return
         payload = cls.decode_and_verify_token(token)
         if payload and payload.get("jti") and payload.get("exp"):
             cls._revoked_jtis[payload["jti"]] = float(payload["exp"])
 
+    @classmethod
+    async def revoke_session_token_persistent(cls, token: Optional[str]) -> None:
+        """Revokes an active session token in both process memory and persistent storage."""
+        if not token:
+            return
+        payload = cls.decode_and_verify_token(token)
+        if payload and payload.get("jti") and payload.get("exp"):
+            jti = payload["jti"]
+            exp_ts = float(payload["exp"])
+            cls._revoked_jtis[jti] = exp_ts
+            await db.revoke_token_jti(jti=jti, exp_ts=exp_ts)
+
     # ====================================================================
-    # Login Brute-Force Rate Limiting
+    # Login Brute-Force Rate Limiting (Per-IP, Per-Username & Bounded Memory)
     # ====================================================================
     @classmethod
     def reset_rate_limits(cls) -> None:
@@ -225,22 +278,50 @@ class AdminAuthService:
         return recent
 
     @classmethod
+    def _enforce_rate_limit_memory_cap(cls, now_ts: float) -> None:
+        """Prevents unbounded growth of failed-attempt tracking memory under IP/username floods."""
+        if len(cls._failed_attempts) <= cls._MAX_RATE_LIMIT_KEYS:
+            return
+        window = settings.ADMIN_LOGIN_WINDOW_SECONDS
+        stale_keys = [
+            k for k, timestamps in list(cls._failed_attempts.items())
+            if not [ts for ts in timestamps if (now_ts - ts) < window]
+        ]
+        for k in stale_keys:
+            cls._failed_attempts.pop(k, None)
+
+        if len(cls._failed_attempts) > cls._MAX_RATE_LIMIT_KEYS:
+            overflow = len(cls._failed_attempts) - cls._MAX_RATE_LIMIT_KEYS
+            for k in list(cls._failed_attempts.keys())[:overflow]:
+                cls._failed_attempts.pop(k, None)
+
+    @classmethod
     def _is_rate_limited(cls, client_ip: str, username: str) -> bool:
         now_ts = time.time()
         max_attempts = settings.ADMIN_LOGIN_MAX_ATTEMPTS
         ip_attempts = cls._prune_attempts(f"ip:{client_ip}", now_ts)
         user_ip_attempts = cls._prune_attempts(f"user:{client_ip}:{username}", now_ts)
-        return len(ip_attempts) >= (max_attempts * 2) or len(user_ip_attempts) >= max_attempts
+        user_global_attempts = cls._prune_attempts(f"user_global:{username}", now_ts) if username else []
+        return (
+            len(ip_attempts) >= (max_attempts * 2)
+            or len(user_ip_attempts) >= max_attempts
+            or len(user_global_attempts) >= (max_attempts * 2)
+        )
 
     @classmethod
     def _record_failed_attempt(cls, client_ip: str, username: str) -> None:
         now_ts = time.time()
         cls._failed_attempts[f"ip:{client_ip}"].append(now_ts)
         cls._failed_attempts[f"user:{client_ip}:{username}"].append(now_ts)
+        if username:
+            cls._failed_attempts[f"user_global:{username}"].append(now_ts)
+        cls._enforce_rate_limit_memory_cap(now_ts)
 
     @classmethod
     def _clear_attempts(cls, client_ip: str, username: str) -> None:
         cls._failed_attempts.pop(f"user:{client_ip}:{username}", None)
+        if username:
+            cls._failed_attempts.pop(f"user_global:{username}", None)
 
     # ====================================================================
     # Login & Session Resolution
@@ -312,6 +393,7 @@ class AdminAuthService:
         cls._clear_attempts(safe_ip, normalized_username)
         updated_admin = await db.update_admin_last_login(admin["id"]) or admin
         token, ttl_seconds = cls.create_session_token(updated_admin)
+        csrf_token = cls.derive_csrf_token(token)
 
         await db.add_log(
             event_type="admin_login_success",
@@ -322,21 +404,32 @@ class AdminAuthService:
         return {
             "admin": cls.sanitize_admin(updated_admin),
             "token": token,
+            "csrf_token": csrf_token,
             "expires_in": ttl_seconds,
         }
 
     @classmethod
-    async def validate_session(cls, token: Optional[str]) -> Optional[Dict[str, Any]]:
-        """Validates session cookie token and confirms admin still exists and is active."""
+    async def validate_session_with_payload(cls, token: Optional[str]) -> Optional[Tuple[Dict[str, Any], Dict[str, Any]]]:
+        """Validates session cookie token (memory + persistent revocation) and returns (admin, payload)."""
         payload = cls.decode_and_verify_token(token or "")
         if not payload:
+            return None
+
+        if await db.is_token_jti_revoked(payload["jti"]):
+            cls._revoked_jtis[payload["jti"]] = float(payload["exp"])
             return None
 
         admin = await db.get_admin_by_id(payload["sub"])
         if not admin or not admin.get("is_active", False):
             return None
 
-        return cls.sanitize_admin(admin)
+        return cls.sanitize_admin(admin), payload
+
+    @classmethod
+    async def validate_session(cls, token: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Validates session cookie token and confirms admin still exists, is active, and token is unrevoked."""
+        resolved = await cls.validate_session_with_payload(token)
+        return resolved[0] if resolved else None
 
     # ====================================================================
     # Initial Admin Bootstrap (Idempotent & Env-Driven)
@@ -389,6 +482,14 @@ class AdminAuthService:
         return f"{payload}.{_b64url_encode(sig)}"
 
     @classmethod
+    async def issue_oauth_state_async(cls, admin_id: Optional[str] = None) -> str:
+        """Generates a signed OAuth state token and stores its single-use nonce persistently."""
+        state = cls.issue_oauth_state()
+        _, exp_str, nonce, _ = state.split(".")
+        await db.store_oauth_state(nonce=nonce, exp_ts=float(exp_str), admin_id=admin_id)
+        return state
+
+    @classmethod
     def _prune_oauth_states(cls, now_ts: float) -> None:
         expired = [k for k, exp in cls._pending_oauth_states.items() if exp <= now_ts]
         for k in expired:
@@ -396,7 +497,7 @@ class AdminAuthService:
 
     @classmethod
     def verify_oauth_state(cls, state: Optional[str]) -> bool:
-        """Validates signed single-use OAuth state parameter and consumes its nonce."""
+        """Validates signed single-use OAuth state parameter and consumes its local nonce."""
         if not state or state.count(".") != 3:
             return False
         try:
@@ -415,10 +516,36 @@ class AdminAuthService:
                 return False
 
             cls._prune_oauth_states(now_ts)
-            # Single-use check if issued in this process
             if nonce in cls._pending_oauth_states:
                 cls._pending_oauth_states.pop(nonce, None)
                 return True
             return False
+        except Exception:
+            return False
+
+    @classmethod
+    async def verify_oauth_state_async(cls, state: Optional[str]) -> bool:
+        """Validates signed single-use OAuth state across local memory and persistent storage."""
+        if not state or state.count(".") != 3:
+            return False
+        try:
+            prefix, exp_str, nonce, sig_b64 = state.split(".")
+            if prefix != "tz_oauth":
+                return False
+            exp_ts = int(exp_str)
+            now_ts = time.time()
+            if exp_ts <= now_ts:
+                return False
+
+            payload = f"{prefix}.{exp_str}.{nonce}".encode("ascii")
+            expected_sig = hmac.new(cls._get_signing_secret(), payload, hashlib.sha256).digest()
+            provided_sig = _b64url_decode(sig_b64)
+            if not hmac.compare_digest(expected_sig, provided_sig):
+                return False
+
+            cls._prune_oauth_states(now_ts)
+            consumed_local = cls._pending_oauth_states.pop(nonce, None) is not None
+            consumed_db = await db.consume_oauth_state(nonce=nonce)
+            return consumed_local or consumed_db
         except Exception:
             return False

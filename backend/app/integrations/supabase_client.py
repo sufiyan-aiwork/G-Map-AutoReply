@@ -7,7 +7,7 @@ Includes local fallback for offline development.
 import uuid
 import logging
 from datetime import datetime, timezone
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from urllib.parse import quote
 import httpx
 from ..config import settings
@@ -165,7 +165,51 @@ class DatabaseClient:
         self._published_replies: List[Dict[str, Any]] = []
         self._logs: List[Dict[str, Any]] = [dict(l) for l in INITIAL_SYSTEM_LOGS]
         self._admin_users: List[Dict[str, Any]] = []
+        self._revoked_tokens: Dict[str, float] = {}
+        self._oauth_states: Dict[str, Tuple[float, Optional[str]]] = {}
         self._isolated_test_mode: bool = False
+
+    @staticmethod
+    def _is_valid_uuid(val: str) -> bool:
+        try:
+            uuid.UUID(str(val))
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    @staticmethod
+    def _encode_filter_val(val: Any) -> str:
+        return quote(str(val), safe="")
+
+    @staticmethod
+    def _map_review_joined_replies(r: Dict[str, Any]) -> Dict[str, Any]:
+        pubs = r.get("published_replies", [])
+        if pubs and len(pubs) > 0:
+            successful_pub = next((p for p in pubs if p.get("publishing_status") == "published"), None)
+            if successful_pub:
+                r["matched_reply"] = successful_pub.get("reply_text")
+                r["publishing_status"] = "published"
+                r["reply_published_at"] = successful_pub.get("google_published_at")
+            else:
+                verif_pub = next(
+                    (
+                        p
+                        for p in pubs
+                        if p.get("publishing_status") == "pending"
+                        and p.get("error_message") in ("verification_pending", "awaiting_google_verification")
+                    ),
+                    None,
+                )
+                if verif_pub:
+                    r["matched_reply"] = verif_pub.get("reply_text")
+                    r["publishing_status"] = "verification_pending"
+                    r["reply_published_at"] = None
+                else:
+                    latest_pub = pubs[0]
+                    r["publishing_status"] = latest_pub.get("publishing_status")
+                    r["matched_reply"] = None
+                    r["reply_published_at"] = None
+        return r
 
     def _get_headers(self) -> Dict[str, str]:
         return {
@@ -234,7 +278,7 @@ class DatabaseClient:
     # Templates
     # ==========================
     async def get_templates(self) -> List[Dict[str, Any]]:
-        if self.is_connected_to_supabase:
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
             try:
                 async with httpx.AsyncClient(timeout=6.0) as client:
                     resp = await client.get(
@@ -272,7 +316,7 @@ class DatabaseClient:
                 break
                 
         # Remote Supabase update
-        if self.is_connected_to_supabase and target:
+        if self.is_connected_to_supabase and not self._isolated_test_mode and target:
             try:
                 update_payload = {"updated_at": now_str}
                 if reply_text is not None:
@@ -280,13 +324,15 @@ class DatabaseClient:
                 if is_active is not None:
                     update_payload["is_active"] = is_active
                 async with httpx.AsyncClient(timeout=6.0) as client:
-                    await client.patch(
-                        f"{self.supabase_url}/rest/v1/reply_templates?category=eq.{category}",
+                    resp = await client.patch(
+                        f"{self.supabase_url}/rest/v1/reply_templates?category=eq.{self._encode_filter_val(category)}",
                         headers=self._get_headers(),
                         json=update_payload
                     )
+                    if not resp.is_success:
+                        logger.warning(f"Supabase reply_template patch returned HTTP {resp.status_code} for '{category}'.")
             except Exception as e:
-                logger.warning(f"Could not patch Supabase reply_template '{category}': {e}")
+                logger.warning(f"Could not patch Supabase reply_template '{category}': {type(e).__name__}")
                 
         return target
 
@@ -300,15 +346,15 @@ class DatabaseClient:
         location_id: Optional[str] = None,
         genuine_only: bool = False
     ) -> List[Dict[str, Any]]:
-        if self.is_connected_to_supabase:
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
             try:
                 params = ["select=*,published_replies(*)"]
                 if rating is not None:
-                    params.append(f"star_rating=eq.{rating}")
+                    params.append(f"star_rating=eq.{int(rating)}")
                 if status is not None:
-                    params.append(f"processing_status=eq.{status}")
+                    params.append(f"processing_status=eq.{self._encode_filter_val(status)}")
                 if location_id is not None:
-                    params.append(f"location_id=eq.{location_id}")
+                    params.append(f"location_id=eq.{self._encode_filter_val(location_id)}")
                 if genuine_only:
                     params.append("google_review_id=like.AbFvO*")
                 query_str = "&".join(params)
@@ -319,27 +365,9 @@ class DatabaseClient:
                     )
                     if resp.status_code == 200:
                         data = resp.json()
-                        # Map joined published_replies to review properties
                         for r in data:
-                            pubs = r.get("published_replies", [])
-                            if pubs and len(pubs) > 0:
-                                successful_pub = next((p for p in pubs if p.get("publishing_status") == "published"), None)
-                                if successful_pub:
-                                    r["matched_reply"] = successful_pub.get("reply_text")
-                                    r["publishing_status"] = "published"
-                                    r["reply_published_at"] = successful_pub.get("google_published_at")
-                                else:
-                                    verif_pub = next((p for p in pubs if p.get("publishing_status") == "pending" and p.get("error_message") in ("verification_pending", "awaiting_google_verification")), None)
-                                    if verif_pub:
-                                        r["matched_reply"] = verif_pub.get("reply_text")
-                                        r["publishing_status"] = "verification_pending"
-                                        r["reply_published_at"] = None
-                                    else:
-                                        latest_pub = pubs[0]
-                                        r["publishing_status"] = latest_pub.get("publishing_status")
-                                        r["matched_reply"] = None
-                                        r["reply_published_at"] = None
-                        
+                            self._map_review_joined_replies(r)
+
                         if genuine_only:
                             data = [r for r in data if r.get("google_review_id", "").startswith("AbFvO")]
                         if location_id:
@@ -351,8 +379,10 @@ class DatabaseClient:
                                 reverse=True
                             )
                             return data
+                    else:
+                        logger.warning(f"Supabase reviews query returned HTTP {resp.status_code}.")
             except Exception as e:
-                logger.warning(f"Failed to fetch reviews from Supabase: {e}")
+                logger.warning(f"Failed to fetch reviews from Supabase: {type(e).__name__}")
 
         results = self._reviews
         if rating is not None:
@@ -368,54 +398,54 @@ class DatabaseClient:
         return sorted(results, key=lambda r: r.get("reply_published_at") or r.get("review_created_at") or r.get("created_at", ""), reverse=True)
 
     async def get_review_by_id(self, review_id: str) -> Optional[Dict[str, Any]]:
-        if self.is_connected_to_supabase:
+        if self.is_connected_to_supabase and not self._isolated_test_mode and self._is_valid_uuid(review_id):
             try:
                 async with httpx.AsyncClient(timeout=6.0) as client:
                     resp = await client.get(
-                        f"{self.supabase_url}/rest/v1/reviews?id=eq.{review_id}&select=*,published_replies(*)",
+                        f"{self.supabase_url}/rest/v1/reviews?id=eq.{self._encode_filter_val(review_id)}&select=*,published_replies(*)",
                         headers=self._get_headers()
                     )
                     if resp.status_code == 200 and len(resp.json()) > 0:
-                        r = resp.json()[0]
-                        pubs = r.get("published_replies", [])
-                        if pubs and len(pubs) > 0:
-                            successful_pub = next((p for p in pubs if p.get("publishing_status") == "published"), None)
-                            if successful_pub:
-                                r["matched_reply"] = successful_pub.get("reply_text")
-                                r["publishing_status"] = "published"
-                                r["reply_published_at"] = successful_pub.get("google_published_at")
-                            else:
-                                verif_pub = next((p for p in pubs if p.get("publishing_status") == "pending" and p.get("error_message") in ("verification_pending", "awaiting_google_verification")), None)
-                                if verif_pub:
-                                    r["matched_reply"] = verif_pub.get("reply_text")
-                                    r["publishing_status"] = "verification_pending"
-                                    r["reply_published_at"] = None
-                                else:
-                                    latest_pub = pubs[0]
-                                    r["publishing_status"] = latest_pub.get("publishing_status")
-                                    r["matched_reply"] = None
-                                    r["reply_published_at"] = None
-                        return r
-            except Exception:
-                pass
+                        return self._map_review_joined_replies(resp.json()[0])
+            except Exception as e:
+                logger.warning(f"Supabase get_review_by_id failed: {type(e).__name__}")
 
         for r in self._reviews:
             if r.get("id") == review_id or r.get("google_review_id") == review_id:
                 return r
         return None
 
-    async def review_exists(self, location_id: str, google_review_id: str) -> bool:
-        if self.is_connected_to_supabase:
+    async def get_review_by_google_id(self, location_id: str, google_review_id: str) -> Optional[Dict[str, Any]]:
+        """Looks up a review safely by (location_id, google_review_id) instead of UUID primary key."""
+        if self.is_connected_to_supabase and not self._isolated_test_mode and location_id and google_review_id:
             try:
                 async with httpx.AsyncClient(timeout=6.0) as client:
                     resp = await client.get(
-                        f"{self.supabase_url}/rest/v1/reviews?location_id=eq.{location_id}&google_review_id=eq.{google_review_id}&select=id",
+                        f"{self.supabase_url}/rest/v1/reviews?location_id=eq.{self._encode_filter_val(location_id)}&google_review_id=eq.{self._encode_filter_val(google_review_id)}&select=*,published_replies(*)&limit=1",
+                        headers=self._get_headers()
+                    )
+                    if resp.status_code == 200 and len(resp.json()) > 0:
+                        return self._map_review_joined_replies(resp.json()[0])
+            except Exception as e:
+                logger.warning(f"Supabase get_review_by_google_id failed: {type(e).__name__}")
+
+        for r in self._reviews:
+            if r.get("location_id") == location_id and r.get("google_review_id") == google_review_id:
+                return r
+        return None
+
+    async def review_exists(self, location_id: str, google_review_id: str) -> bool:
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
+            try:
+                async with httpx.AsyncClient(timeout=6.0) as client:
+                    resp = await client.get(
+                        f"{self.supabase_url}/rest/v1/reviews?location_id=eq.{self._encode_filter_val(location_id)}&google_review_id=eq.{self._encode_filter_val(google_review_id)}&select=id",
                         headers=self._get_headers()
                     )
                     if resp.status_code == 200 and len(resp.json()) > 0:
                         return True
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Supabase review_exists check failed: {type(e).__name__}")
 
         for r in self._reviews:
             if r.get("location_id") == location_id and r.get("google_review_id") == google_review_id:
@@ -445,19 +475,21 @@ class DatabaseClient:
         # Development simulator records (e.g. sim_rev_*) and mock/sync test records
         # are kept in the local in-memory store and never pollute production Supabase.
         is_test_review = new_review["google_review_id"].startswith(("sim_", "g_sync_", "mock_", "google_rev_"))
-        if self.is_connected_to_supabase and not is_test_review:
+        if self.is_connected_to_supabase and not self._isolated_test_mode and not is_test_review:
             try:
                 # Insert only table schema columns into Supabase
                 cols = ['id', 'google_review_id', 'location_id', 'star_rating', 'review_text', 'reviewer_name', 'review_created_at', 'processing_status', 'created_at', 'updated_at']
                 clean_payload = {k: new_review[k] for k in cols if k in new_review}
                 async with httpx.AsyncClient(timeout=6.0) as client:
-                    await client.post(
+                    resp = await client.post(
                         f"{self.supabase_url}/rest/v1/reviews",
                         headers=self._get_headers(),
                         json=clean_payload
                     )
+                    if not resp.is_success:
+                        logger.warning(f"Supabase create_review returned HTTP {resp.status_code}.")
             except Exception as e:
-                logger.warning(f"Could not persist review to Supabase: {e}")
+                logger.warning(f"Could not persist review to Supabase: {type(e).__name__}")
 
         return new_review
 
@@ -477,20 +509,22 @@ class DatabaseClient:
                 target = r
                 break
 
-        if self.is_connected_to_supabase:
+        if self.is_connected_to_supabase and not self._isolated_test_mode and self._is_valid_uuid(review_id):
             try:
                 update_payload = {
                     "processing_status": status,
                     "updated_at": now_str
                 }
                 async with httpx.AsyncClient(timeout=6.0) as client:
-                    await client.patch(
-                        f"{self.supabase_url}/rest/v1/reviews?id=eq.{review_id}",
+                    resp = await client.patch(
+                        f"{self.supabase_url}/rest/v1/reviews?id=eq.{self._encode_filter_val(review_id)}",
                         headers=self._get_headers(),
                         json=update_payload
                     )
+                    if not resp.is_success:
+                        logger.warning(f"Supabase update_review_status returned HTTP {resp.status_code}.")
             except Exception as e:
-                logger.warning(f"Could not update review status in Supabase: {e}")
+                logger.warning(f"Could not update review status in Supabase: {type(e).__name__}")
 
         return target
 
@@ -519,16 +553,18 @@ class DatabaseClient:
 
         # Only persist to Supabase if not a test review (genuine reviews only)
         test_ids = {r["id"] for r in self._reviews if r.get("google_review_id", "").startswith(("sim_", "g_sync_", "mock_", "google_rev_", "AbFvO_sample_"))}
-        if self.is_connected_to_supabase and review_id not in test_ids:
+        if self.is_connected_to_supabase and not self._isolated_test_mode and review_id not in test_ids and (self._is_valid_uuid(review_id) or str(review_id).startswith("test_")):
             try:
                 async with httpx.AsyncClient(timeout=6.0) as client:
-                    await client.post(
+                    resp = await client.post(
                         f"{self.supabase_url}/rest/v1/published_replies",
                         headers=self._get_headers(),
                         json=record
                     )
+                    if not resp.is_success:
+                        logger.warning(f"Supabase record_published_reply returned HTTP {resp.status_code}.")
             except Exception as e:
-                logger.warning(f"Could not record published reply in Supabase: {e}")
+                logger.warning(f"Could not record published reply in Supabase: {type(e).__name__}")
 
         record_copy = dict(record)
         record_copy["publishing_status"] = status
@@ -545,7 +581,7 @@ class DatabaseClient:
                 target = p
                 break
 
-        if self.is_connected_to_supabase:
+        if self.is_connected_to_supabase and not self._isolated_test_mode and self._is_valid_uuid(review_id):
             try:
                 patch_payload = {
                     "publishing_status": status,
@@ -553,13 +589,15 @@ class DatabaseClient:
                     "error_message": None
                 }
                 async with httpx.AsyncClient(timeout=6.0) as client:
-                    await client.patch(
-                        f"{self.supabase_url}/rest/v1/published_replies?review_id=eq.{review_id}",
+                    resp = await client.patch(
+                        f"{self.supabase_url}/rest/v1/published_replies?review_id=eq.{self._encode_filter_val(review_id)}",
                         headers=self._get_headers(),
                         json=patch_payload
                     )
+                    if not resp.is_success:
+                        logger.warning(f"Supabase update_published_reply returned HTTP {resp.status_code}.")
             except Exception as e:
-                logger.warning(f"Could not update published reply in Supabase: {e}")
+                logger.warning(f"Could not update published reply in Supabase: {type(e).__name__}")
 
         return target
 
@@ -571,7 +609,7 @@ class DatabaseClient:
         loc = self._business_config.get("google_location_id") or ""
         if "auto_detected_" in acc or "auto_detected_" in loc:
             return self._business_config
-        if self.is_connected_to_supabase:
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
             try:
                 async with httpx.AsyncClient(timeout=6.0) as client:
                     resp = await client.get(
@@ -607,7 +645,7 @@ class DatabaseClient:
             (google_account_id and "auto_detected_" in google_account_id) or
             (google_location_id and "auto_detected_" in google_location_id)
         )
-        if self.is_connected_to_supabase and not is_mock_test_id:
+        if self.is_connected_to_supabase and not self._isolated_test_mode and not is_mock_test_id:
             try:
                 patch_data = {"updated_at": now_str}
                 if auto_reply_enabled is not None:
@@ -619,13 +657,15 @@ class DatabaseClient:
                 if google_location_id is not None:
                     patch_data["google_location_id"] = google_location_id
                 async with httpx.AsyncClient(timeout=6.0) as client:
-                    await client.patch(
+                    resp = await client.patch(
                         f"{self.supabase_url}/rest/v1/business_config?business_name=eq.Techzone%20Academy",
                         headers=self._get_headers(),
                         json=patch_data
                     )
+                    if not resp.is_success:
+                        logger.warning(f"Supabase update_business_config returned HTTP {resp.status_code}.")
             except Exception as e:
-                logger.warning(f"Could not patch Supabase business_config: {e}")
+                logger.warning(f"Could not patch Supabase business_config: {type(e).__name__}")
 
         return self._business_config
 
@@ -642,32 +682,105 @@ class DatabaseClient:
         }
         self._logs.insert(0, record)
 
-        if self.is_connected_to_supabase:
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
             try:
                 async with httpx.AsyncClient(timeout=6.0) as client:
-                    await client.post(
+                    resp = await client.post(
                         f"{self.supabase_url}/rest/v1/system_logs",
                         headers=self._get_headers(),
                         json=record
                     )
+                    if not resp.is_success:
+                        logger.warning(f"Supabase add_log returned HTTP {resp.status_code}.")
             except Exception:
                 pass
 
         return record
 
     async def get_logs(self, limit: int = 50) -> List[Dict[str, Any]]:
-        if self.is_connected_to_supabase:
+        safe_limit = max(1, min(int(limit), 200))
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
             try:
                 async with httpx.AsyncClient(timeout=6.0) as client:
                     resp = await client.get(
-                        f"{self.supabase_url}/rest/v1/system_logs?select=*&order=created_at.desc&limit={limit}",
+                        f"{self.supabase_url}/rest/v1/system_logs?select=*&order=created_at.desc&limit={safe_limit}",
                         headers=self._get_headers()
                     )
                     if resp.status_code == 200 and len(resp.json()) > 0:
                         return resp.json()
             except Exception:
                 pass
-        return self._logs[:limit]
+        return self._logs[:safe_limit]
+
+    # ==========================
+    # Persistent Session Revocation & OAuth Nonces (Optional Migration Fallback)
+    # ==========================
+    async def revoke_token_jti(self, jti: str, exp_ts: float) -> None:
+        self._revoked_tokens[jti] = float(exp_ts)
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
+            try:
+                expires_iso = datetime.fromtimestamp(exp_ts, tz=timezone.utc).isoformat()
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    resp = await client.post(
+                        f"{self.supabase_url}/rest/v1/admin_revoked_tokens",
+                        headers={**self._get_headers(), "Prefer": "resolution=merge-duplicates"},
+                        json={"jti": jti, "expires_at": expires_iso}
+                    )
+                    if not resp.is_success and resp.status_code != 404:
+                        logger.warning(f"Supabase revoke_token_jti returned HTTP {resp.status_code}.")
+            except Exception:
+                pass
+
+    async def is_token_jti_revoked(self, jti: str) -> bool:
+        exp = self._revoked_tokens.get(jti)
+        if exp is not None:
+            if exp > datetime.now(timezone.utc).timestamp():
+                return True
+            self._revoked_tokens.pop(jti, None)
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
+            try:
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    resp = await client.get(
+                        f"{self.supabase_url}/rest/v1/admin_revoked_tokens?jti=eq.{self._encode_filter_val(jti)}&select=jti&limit=1",
+                        headers=self._get_headers()
+                    )
+                    if resp.status_code == 200 and len(resp.json()) > 0:
+                        return True
+            except Exception:
+                pass
+        return False
+
+    async def store_oauth_state(self, nonce: str, exp_ts: float, admin_id: Optional[str] = None) -> None:
+        self._oauth_states[nonce] = (float(exp_ts), admin_id)
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
+            try:
+                expires_iso = datetime.fromtimestamp(exp_ts, tz=timezone.utc).isoformat()
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    resp = await client.post(
+                        f"{self.supabase_url}/rest/v1/oauth_states",
+                        headers=self._get_headers(),
+                        json={"nonce": nonce, "admin_id": admin_id, "expires_at": expires_iso}
+                    )
+                    if not resp.is_success and resp.status_code != 404:
+                        logger.warning(f"Supabase store_oauth_state returned HTTP {resp.status_code}.")
+            except Exception:
+                pass
+
+    async def consume_oauth_state(self, nonce: str) -> bool:
+        entry = self._oauth_states.pop(nonce, None)
+        consumed_local = bool(entry and entry[0] > datetime.now(timezone.utc).timestamp())
+        if self.is_connected_to_supabase and not self._isolated_test_mode:
+            try:
+                async with httpx.AsyncClient(timeout=4.0) as client:
+                    resp = await client.delete(
+                        f"{self.supabase_url}/rest/v1/oauth_states?nonce=eq.{self._encode_filter_val(nonce)}",
+                        headers={**self._get_headers(), "Prefer": "return=representation"}
+                    )
+                    if resp.status_code == 200 and len(resp.json()) > 0:
+                        return True
+            except Exception:
+                pass
+        return consumed_local
 
     # ==========================
     # Admin Users

@@ -16,13 +16,13 @@ router = APIRouter(
 @router.get("/summary")
 async def get_dashboard_summary() -> Dict[str, Any]:
     config = await db.get_business_config()
-    active_location = config.get("google_location_id") or "locations/4001506839118937948"
+    active_location = config.get("google_location_id")
 
     from ..integrations.google_business import google_client
     is_live = google_client.has_credentials
 
     reviews = await db.get_reviews(
-        location_id=active_location if is_live else None,
+        location_id=active_location if (is_live and active_location) else None,
         genuine_only=is_live
     )
     

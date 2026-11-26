@@ -263,28 +263,32 @@ async def test_9_manual_publishing_works_while_automation_is_disabled():
     }
 
     with patch("app.services.publishing_service.db.get_business_config", new_callable=AsyncMock) as mock_config, \
+         patch("app.services.publishing_service.db.get_review_by_id", new_callable=AsyncMock, return_value=None), \
          patch("app.services.publishing_service.google_client.publish_reply", new_callable=AsyncMock) as mock_g_pub, \
          patch("app.services.publishing_service.google_client.get_review", new_callable=AsyncMock) as mock_g_get, \
          patch("app.services.publishing_service.db.update_review_status", new_callable=AsyncMock) as mock_update, \
          patch("app.services.publishing_service.db.record_published_reply", new_callable=AsyncMock) as mock_record, \
          patch("app.services.publishing_service.db.add_log", new_callable=AsyncMock):
 
-        mock_config.return_value = {"auto_reply_enabled": False}  # Automation is globally PAUSED
+        mock_config.return_value = {"auto_reply_enabled": False, "google_account_id": "acc_1", "google_location_id": "loc_1"}  # Automation is globally PAUSED
         mock_g_pub.return_value = {"success": True, "updateTime": "2026-11-24T16:00:00Z"}
-        mock_g_get.return_value = {
-            "success": True,
-            "has_reply": True,
-            "reply_text": "Thank you for sharing your valuable feedback with Techzone Academy! We are happy to have you as part of our learning community. We truly appreciate your support!",
-            "update_time": "2026-11-24T16:00:00Z",
-            "reply_state": None,
-            "policy_violation": None,
-            "review": {
-                "reviewReply": {
-                    "comment": "Thank you for sharing your valuable feedback with Techzone Academy! We are happy to have you as part of our learning community. We truly appreciate your support!",
-                    "updateTime": "2026-11-24T16:00:00Z"
+        mock_g_get.side_effect = [
+            {"success": True, "has_reply": False},
+            {
+                "success": True,
+                "has_reply": True,
+                "reply_text": "Thank you for sharing your valuable feedback with Techzone Academy! We are happy to have you as part of our learning community. We truly appreciate your support!",
+                "update_time": "2026-11-24T16:00:00Z",
+                "reply_state": None,
+                "policy_violation": None,
+                "review": {
+                    "reviewReply": {
+                        "comment": "Thank you for sharing your valuable feedback with Techzone Academy! We are happy to have you as part of our learning community. We truly appreciate your support!",
+                        "updateTime": "2026-11-24T16:00:00Z"
+                    }
                 }
-            }
-        }
+            },
+        ]
 
         # With manual_override=True, publishing succeeds despite auto_reply_enabled=False
         result = await PublishingService.publish_reply_for_review(review_record, manual_override=True)

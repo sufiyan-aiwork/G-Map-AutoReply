@@ -27,13 +27,14 @@ class ReviewService:
         review_text: Optional[str] = None,
         reviewer_name: Optional[str] = "Valued Customer",
         review_created_at: Optional[str] = None,
-        auto_publish: bool = False
+        auto_publish: bool = False,
+        simulator_only: bool = False
     ) -> Dict[str, Any]:
         """
         Ingests a customer review:
         1. Checks for duplicates by (location_id, google_review_id).
         2. Persists review into Supabase.
-        3. If auto_publish=True, triggers PublishingService.
+        3. If auto_publish=True, triggers PublishingService (strictly dry_run when simulator_only=True).
         """
         # Step 1: Duplicate check
         is_duplicate = await db.review_exists(location_id=location_id, google_review_id=google_review_id)
@@ -78,7 +79,10 @@ class ReviewService:
                     "error": "Automatic review replies are paused."
                 }
             else:
-                publish_result = await PublishingService.publish_reply_for_review(stored_review)
+                publish_result = await PublishingService.publish_reply_for_review(
+                    stored_review,
+                    dry_run=simulator_only
+                )
             
         # Re-fetch updated review
         updated_review = await db.get_review_by_id(stored_review["id"])
@@ -169,7 +173,7 @@ class ReviewService:
                 if is_dup:
                     # Reconciliation: If review was stored as pending but Google now exposes the owner reply
                     if has_google_reply:
-                        db_rev = await db.get_review_by_id(g_review_id)
+                        db_rev = await db.get_review_by_google_id(location_id=loc, google_review_id=g_review_id)
                         if db_rev and db_rev.get("processing_status") == "pending":
                             reply_text = google_reply.get("comment", "")
                             reply_time = google_reply.get("updateTime")

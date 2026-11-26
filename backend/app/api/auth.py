@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Query, Request, HTTPException, status
 from fastapi.responses import RedirectResponse
 from typing import Dict, Any, Optional
 from urllib.parse import urlencode
+from ..config import settings
 from ..integrations.google_business import google_client
 from ..integrations.supabase_client import db
 from ..services.admin_auth_service import AdminAuthService
@@ -14,18 +15,23 @@ from .admin_auth import require_admin
 
 router = APIRouter(prefix="/api/auth/google", tags=["Google Auth"])
 
+
+def _frontend_redirect_base() -> str:
+    return (settings.FRONTEND_URL or "http://localhost:5174").strip().rstrip("/")
+
+
 @router.get("/status", dependencies=[Depends(require_admin)])
 async def get_google_status() -> Dict[str, Any]:
     """Returns safe Google Business Profile integration readiness and status."""
     return google_client.get_connection_info()
 
-@router.get("/login", dependencies=[Depends(require_admin)])
-async def initiate_google_login():
+@router.get("/login")
+async def initiate_google_login(current_admin: Dict[str, Any] = Depends(require_admin)):
     """
     Generates the Google OAuth 2.0 authorization URL with a signed single-use
     CSRF state token and returns it for browser redirection.
     """
-    oauth_state = AdminAuthService.issue_oauth_state()
+    oauth_state = await AdminAuthService.issue_oauth_state_async(admin_id=current_admin.get("id"))
     auth_url = google_client.generate_auth_url(state=oauth_state)
     return {
         "auth_url": auth_url,
@@ -36,9 +42,9 @@ async def initiate_google_login():
 
 @router.get("/callback")
 async def google_oauth_callback(
-    code: Optional[str] = Query(None, description="Google OAuth authorization code"),
-    error: Optional[str] = Query(None, description="Google OAuth error response"),
-    state: Optional[str] = Query(None, description="Signed OAuth CSRF state parameter")
+    code: Optional[str] = Query(None, max_length=2048, description="Google OAuth authorization code"),
+    error: Optional[str] = Query(None, max_length=256, description="Google OAuth error response"),
+    state: Optional[str] = Query(None, max_length=512, description="Signed OAuth CSRF state parameter")
 ):
     """
     OAuth 2.0 callback endpoint.
@@ -49,7 +55,9 @@ async def google_oauth_callback(
     Never exposes OAuth tokens or secrets to the frontend.
     Does NOT publish replies to real reviews during this authentication flow.
     """
-    if not AdminAuthService.verify_oauth_state(state):
+    frontend_base = _frontend_redirect_base()
+
+    if not await AdminAuthService.verify_oauth_state_async(state):
         await db.add_log(
             event_type="oauth_state_invalid",
             description="Rejected Google OAuth callback due to missing, invalid, or expired CSRF state token.",
@@ -62,11 +70,11 @@ async def google_oauth_callback(
     if error:
         await db.add_log(
             event_type="oauth_failed",
-            description=f"Google OAuth authorization rejected or failed: {error}",
+            description=f"Google OAuth authorization rejected or failed ({error[:100]}).",
             status="error"
         )
-        params = urlencode({"google_auth": "error", "message": f"Authorization error: {error}"})
-        return RedirectResponse(url=f"http://localhost:5173/?{params}", status_code=status.HTTP_302_FOUND)
+        params = urlencode({"google_auth": "error", "message": "Google OAuth authorization was declined or failed."})
+        return RedirectResponse(url=f"{frontend_base}/?{params}", status_code=status.HTTP_302_FOUND)
 
     if not code:
         raise HTTPException(
@@ -75,7 +83,7 @@ async def google_oauth_callback(
         )
 
     try:
-        # Step 1: Exchange authorization code for tokens (retained securely in backend memory only)
+        # Step 1: Exchange authorization code for tokens (retained securely in backend memory/encrypted storage only)
         token_data = await google_client.exchange_code_for_tokens(code)
         access_token = token_data.get("access_token")
 
@@ -106,7 +114,7 @@ async def google_oauth_callback(
                 "account": account_id or "",
                 "location": location_id or ""
             })
-            return RedirectResponse(url=f"http://localhost:5173/?{params}", status_code=status.HTTP_302_FOUND)
+            return RedirectResponse(url=f"{frontend_base}/?{params}", status_code=status.HTTP_302_FOUND)
 
         elif discovery_status == "ambiguous_account":
             error_msg = discovery.get("error", "Multiple Google Business accounts detected without unique Techzone match.")
@@ -119,7 +127,7 @@ async def google_oauth_callback(
                 "google_auth": "ambiguous_account",
                 "message": error_msg
             })
-            return RedirectResponse(url=f"http://localhost:5173/?{params}", status_code=status.HTTP_302_FOUND)
+            return RedirectResponse(url=f"{frontend_base}/?{params}", status_code=status.HTTP_302_FOUND)
 
         elif discovery_status == "ambiguous_location":
             account_id = discovery.get("account_id")
@@ -136,7 +144,7 @@ async def google_oauth_callback(
                 "account": account_id or "",
                 "message": error_msg
             })
-            return RedirectResponse(url=f"http://localhost:5173/?{params}", status_code=status.HTTP_302_FOUND)
+            return RedirectResponse(url=f"{frontend_base}/?{params}", status_code=status.HTTP_302_FOUND)
 
         elif discovery_status in ("no_accounts", "no_locations"):
             error_msg = discovery.get("error", "No Google Business Profile account or location found.")
@@ -149,32 +157,31 @@ async def google_oauth_callback(
                 "google_auth": discovery_status,
                 "message": error_msg
             })
-            return RedirectResponse(url=f"http://localhost:5173/?{params}", status_code=status.HTTP_302_FOUND)
+            return RedirectResponse(url=f"{frontend_base}/?{params}", status_code=status.HTTP_302_FOUND)
 
         else:
-            error_msg = discovery.get("error", "Failed to auto-detect Google Business Profile account and location.")
             await db.add_log(
                 event_type="discovery_error",
-                description=error_msg,
+                description=str(discovery.get("error", "Failed to auto-detect Google Business Profile account and location."))[:300],
                 status="error"
             )
             params = urlencode({
                 "google_auth": "discovery_error",
-                "message": error_msg
+                "message": "Failed to auto-detect Google Business Profile account and location."
             })
-            return RedirectResponse(url=f"http://localhost:5173/?{params}", status_code=status.HTTP_302_FOUND)
+            return RedirectResponse(url=f"{frontend_base}/?{params}", status_code=status.HTTP_302_FOUND)
 
     except Exception as e:
         await db.add_log(
             event_type="oauth_error",
-            description=f"Error exchanging Google OAuth code: {str(e)}",
+            description=f"Error exchanging Google OAuth code ({type(e).__name__}).",
             status="error"
         )
         params = urlencode({
             "google_auth": "error",
-            "message": str(e)
+            "message": "Google OAuth token exchange failed. Please try again."
         })
-        return RedirectResponse(url=f"http://localhost:5173/?{params}", status_code=status.HTTP_302_FOUND)
+        return RedirectResponse(url=f"{frontend_base}/?{params}", status_code=status.HTTP_302_FOUND)
 
 @router.post("/disconnect", dependencies=[Depends(require_admin)])
 async def disconnect_google() -> Dict[str, Any]:
