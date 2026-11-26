@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import {
   Search,
   MessageSquare,
@@ -641,31 +642,33 @@ export default function Reviews({
         </div>
       )}
 
-      {/* Review Inspection Modal */}
-      {selectedReview && (
-        <div
-          className="fixed inset-0 z-50 bg-[#00142b]/60 backdrop-blur-sm flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="review-modal-title"
-          onClick={() => !isPublishingSingle && !showPublishConfirm && closeModal()}
-        >
+      {/* Review Inspection Modal (portaled to document.body so viewport centering is unaffected by page transforms or scroll containers) */}
+      {selectedReview && (() => {
+        const inspectionModal = (
           <div
-            className="bg-white rounded-3xl max-w-xl w-full shadow-2xl border border-[#e2e8f0] overflow-hidden modal-enter max-h-[90vh] flex flex-col"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 bg-[#00142b]/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="review-modal-title"
+            onClick={() => !isPublishingSingle && !showPublishConfirm && closeModal()}
           >
-            <div className="h-1.5 w-full tz-top-accent shrink-0" />
-            <div className="p-6 sm:p-7 space-y-5 overflow-y-auto">
-              <div className="flex items-center justify-between border-b border-[#e2e8f0] pb-3.5">
-                <div className="flex items-center gap-2.5">
-                  <div className="p-2 rounded-xl bg-[#e8f1f8] text-[#025091] border border-[#b9d7ef]">
+            <div
+              className="bg-white rounded-2xl sm:rounded-3xl max-w-xl w-full shadow-2xl border border-[#e2e8f0] overflow-hidden modal-enter max-h-[88vh] sm:max-h-[90vh] flex flex-col my-auto min-w-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="h-1.5 w-full tz-top-accent shrink-0" />
+
+              {/* Pinned Modal Header */}
+              <div className="px-5 pt-4 pb-3.5 sm:px-7 sm:pt-6 sm:pb-4 border-b border-[#e2e8f0] flex items-center justify-between gap-3 shrink-0 bg-white">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="p-2 rounded-xl bg-[#e8f1f8] text-[#025091] border border-[#b9d7ef] shrink-0">
                     <MessageSquare size={18} />
                   </div>
-                  <div>
-                    <h3 id="review-modal-title" className="font-heading text-base font-bold text-[#1a1a2e]">
+                  <div className="min-w-0">
+                    <h3 id="review-modal-title" className="font-heading text-base font-bold text-[#1a1a2e] truncate">
                       Review &amp; Predefined Reply
                     </h3>
-                    <p className="text-xs text-[#64748b]">Google Business Profile Review Inspection</p>
+                    <p className="text-xs text-[#64748b] truncate">Google Business Profile Review Inspection</p>
                   </div>
                 </div>
                 <button
@@ -673,17 +676,18 @@ export default function Reviews({
                   onClick={closeModal}
                   disabled={isPublishingSingle}
                   aria-label="Close review details modal"
-                  className="text-slate-400 hover:text-[#1a1a2e] hover:bg-slate-100 p-1.5 rounded-lg transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 disabled:opacity-40"
+                  className="text-slate-400 hover:text-[#1a1a2e] hover:bg-slate-100 p-1.5 rounded-lg transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 disabled:opacity-40 shrink-0"
                 >
                   <X size={20} />
                 </button>
               </div>
 
-              <div className="space-y-4 text-sm">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
+              {/* Scrollable Modal Body */}
+              <div className="px-5 py-4 sm:px-7 sm:py-5 space-y-4 text-sm overflow-y-auto flex-1 min-h-0 overscroll-contain">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="min-w-0">
                     <span className="text-[11px] text-[#64748b] uppercase font-bold tracking-wider">Reviewer</span>
-                    <p className="font-bold text-[#1a1a2e] mt-0.5">
+                    <p className="font-bold text-[#1a1a2e] mt-0.5 break-words">
                       {selectedReview.reviewer_name || 'Valued Customer'}
                     </p>
                   </div>
@@ -713,7 +717,7 @@ export default function Reviews({
                   <span className="text-[11px] text-[#64748b] uppercase font-bold tracking-wider">
                     Customer Review on Google
                   </span>
-                  <p className="mt-1 p-3.5 bg-[#f8fafc] rounded-xl border border-[#e2e8f0] text-[#1a1a2e] text-sm leading-relaxed">
+                  <p className="mt-1 p-3.5 bg-[#f8fafc] rounded-xl border border-[#e2e8f0] text-[#1a1a2e] text-sm leading-relaxed break-words">
                     {selectedReview.review_text && selectedReview.review_text.trim()
                       ? `"${selectedReview.review_text}"`
                       : 'No written comment — star rating only.'}
@@ -746,7 +750,7 @@ export default function Reviews({
                           </span>
                         )}
                       </div>
-                      <p>{selectedReview.matched_reply}</p>
+                      <p className="break-words">{selectedReview.matched_reply}</p>
                     </div>
                   </div>
                 ) : isSelectedVerificationPending ? (
@@ -759,7 +763,7 @@ export default function Reviews({
                       This reply has already been accepted by Google Business Profile. The scheduler reconciles visibility automatically using GET-only checks without sending duplicate PUT requests.
                     </p>
                     {selectedReview.matched_reply && (
-                      <p className="text-xs text-[#1a1a2e] bg-white/85 p-3 rounded-lg border border-sky-200 italic">
+                      <p className="text-xs text-[#1a1a2e] bg-white/85 p-3 rounded-lg border border-sky-200 italic break-words">
                         &ldquo;{selectedReview.matched_reply}&rdquo;
                       </p>
                     )}
@@ -787,14 +791,14 @@ export default function Reviews({
                       </div>
 
                       <div className="p-3.5 bg-[#eff6fb] rounded-xl border border-[#b9d7ef] text-[#1a1a2e] text-sm leading-relaxed">
-                        <div className="text-[11px] font-bold text-[#001f3f] mb-1 flex items-center justify-between">
+                        <div className="text-[11px] font-bold text-[#001f3f] mb-1 flex flex-wrap items-center justify-between gap-2">
                           <span>
                             Assigned Template:{' '}
                             {selectedReview.star_rating >= 3 ? 'Positive (3–5 Stars)' : 'Negative (1–2 Stars)'}
                           </span>
                           <span className="text-[#025091] font-semibold">Deterministic</span>
                         </div>
-                        <p>{selectedReview.star_rating >= 3 ? positiveTemplate : negativeTemplate}</p>
+                        <p className="break-words">{selectedReview.star_rating >= 3 ? positiveTemplate : negativeTemplate}</p>
                       </div>
                     </div>
 
@@ -802,7 +806,7 @@ export default function Reviews({
                     <div className="p-4 bg-amber-50/70 rounded-xl border border-amber-200 space-y-3">
                       <div className="flex items-start gap-2.5">
                         <ShieldCheck size={16} className="text-amber-600 mt-0.5 shrink-0" />
-                        <div>
+                        <div className="min-w-0">
                           <h4 className="font-heading text-xs font-bold text-amber-950">
                             Controlled Single-Review Publishing
                           </h4>
@@ -844,13 +848,13 @@ export default function Reviews({
                 )}
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-3 text-xs text-[#64748b] border-t border-[#e2e8f0]">
-                  <div>
+                  <div className="min-w-0">
                     <span className="font-semibold text-[#1a1a2e]">Google Review ID:</span>
                     <div className="font-mono text-[11px] text-[#64748b] truncate mt-0.5">
                       {selectedReview.google_review_id}
                     </div>
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <span className="font-semibold text-[#1a1a2e]">Review Date:</span>
                     <div className="mt-0.5 tabular-nums">
                       {new Date(selectedReview.review_created_at || selectedReview.created_at).toLocaleString()}
@@ -859,20 +863,25 @@ export default function Reviews({
                 </div>
               </div>
 
-              <div className="pt-2 flex justify-end">
+              {/* Pinned Modal Footer */}
+              <div className="px-5 py-3.5 sm:px-7 sm:py-4 border-t border-[#e2e8f0] bg-[#f8fafc] flex justify-end shrink-0">
                 <button
                   type="button"
                   onClick={closeModal}
                   disabled={isPublishingSingle}
-                  className="px-5 py-2 bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#1a1a2e] rounded-xl text-xs font-bold transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 disabled:opacity-50"
+                  className="px-5 py-2 bg-white border border-[#e2e8f0] hover:bg-[#e2e8f0]/60 text-[#1a1a2e] rounded-xl text-xs font-bold transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 disabled:opacity-50"
                 >
                   Close
                 </button>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+
+        return typeof document !== 'undefined'
+          ? createPortal(inspectionModal, document.body)
+          : inspectionModal;
+      })()}
 
       {/* Unified ConfirmDialog for Single-Review Live Google Publishing */}
       <ConfirmDialog

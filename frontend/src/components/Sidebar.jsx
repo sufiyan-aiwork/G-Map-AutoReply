@@ -3,10 +3,8 @@ import {
   LayoutDashboard,
   MessageSquare,
   FileText,
-  BarChart3,
-  Sliders,
   History,
-  Globe2,
+  Settings,
   X
 } from 'lucide-react';
 import BrandLogo from './BrandLogo';
@@ -23,10 +21,8 @@ export default function Sidebar({
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'reviews', label: 'Customer Reviews', icon: MessageSquare },
     { id: 'templates', label: 'Reply Templates', icon: FileText },
-    { id: 'analytics', label: 'Analytics', icon: BarChart3 },
-    { id: 'automation', label: 'Automation Settings', icon: Sliders },
     { id: 'logs', label: 'Activity Logs', icon: History },
-    { id: 'google', label: 'Google Business Settings', icon: Globe2 },
+    { id: 'settings', label: 'Settings', icon: Settings },
   ];
 
   return (
@@ -50,7 +46,7 @@ export default function Sidebar({
         {/* Top TechZone Accent Line */}
         <div className="h-1 w-full tz-top-accent shrink-0" />
 
-        {/* Brand Header with Dedicated Official Logo Slot */}
+        {/* Brand Header with Official TechZone Logo */}
         <div className="h-16 flex items-center justify-between px-4 border-b border-[#012b55]">
           <div className="flex items-center gap-3 min-w-0">
             <BrandLogo size="md" surface="dark" />

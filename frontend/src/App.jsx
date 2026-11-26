@@ -4,10 +4,8 @@ import DashboardLayout from './layouts/DashboardLayout';
 import Overview from './pages/Overview';
 import Reviews from './pages/Reviews';
 import Templates from './pages/Templates';
-import Analytics from './pages/Analytics';
-import Automation from './pages/Automation';
 import ActivityLogs from './pages/ActivityLogs';
-import GoogleSettings from './pages/GoogleSettings';
+import Settings from './pages/Settings';
 import Login from './pages/Login';
 import ConfirmDialog from './components/ConfirmDialog';
 import { api, setUnauthorizedHandler } from './services/api';
@@ -119,22 +117,22 @@ export default function App() {
       const loc = params.get('location') || '';
       const detail = loc ? `Location: ${loc}` : (acc ? `Account: ${acc}` : '');
       showToast('success', `Google Business Profile successfully connected! ${detail ? `Auto-detected ${detail}.` : ''}`, 7000);
-      setCurrentTab('google');
+      setCurrentTab('settings');
       window.history.replaceState({}, document.title, window.location.pathname);
     } else if (authStatus === 'ambiguous_account' || authStatus === 'ambiguous_location') {
       const msg = params.get('message') || 'Multiple accounts or locations detected. Ambiguity prevented automatic selection.';
       showToast('warning', `Google OAuth Warning: ${msg}`, 8000);
-      setCurrentTab('google');
+      setCurrentTab('settings');
       window.history.replaceState({}, document.title, window.location.pathname);
     } else if (authStatus === 'no_accounts' || authStatus === 'no_locations') {
       const msg = params.get('message') || 'No Google Business Profile account or location found.';
       showToast('error', `Notice: ${msg}`, 8000);
-      setCurrentTab('google');
+      setCurrentTab('settings');
       window.history.replaceState({}, document.title, window.location.pathname);
     } else if (authStatus === 'error' || authStatus === 'discovery_error') {
       const msg = params.get('message') || 'Google OAuth authorization was declined or encountered an error.';
       showToast('error', `OAuth Error: ${msg}`, 8000);
-      setCurrentTab('google');
+      setCurrentTab('settings');
       window.history.replaceState({}, document.title, window.location.pathname);
     }
 
@@ -334,22 +332,14 @@ export default function App() {
         );
       case 'templates':
         return <Templates templates={templates} isLoading={isInitialLoading} onUpdateTemplate={handleUpdateTemplate} />;
-      case 'analytics':
-        return <Analytics summary={summary} reviews={reviews} isLoading={isInitialLoading} />;
-      case 'automation':
-        return (
-          <Automation
-            automationStatus={automationStatus}
-            isLoading={isInitialLoading}
-            onToggleAutomation={handleToggleAutomation}
-            onUpdateSettings={handleUpdateAutomationSettings}
-          />
-        );
       case 'logs':
         return <ActivityLogs logs={logs} isLoading={isInitialLoading} onRefresh={loadData} isRefreshing={isRefreshing} />;
-      case 'google':
+      case 'settings':
         return (
-          <GoogleSettings
+          <Settings
+            automationStatus={automationStatus}
+            isLoading={isInitialLoading}
+            onUpdateSettings={handleUpdateAutomationSettings}
             onSyncReviews={handleSyncReviews}
             isSyncing={isSyncing}
           />

@@ -206,7 +206,7 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
           subtitle={`${posShare}% positive mix`}
           icon={Star}
           color="navy"
-          onClick={() => onNavigate('analytics')}
+          onClick={() => onNavigate('reviews', { category: 'all', rating: 'all', status: 'all' })}
         />
       </div>
 

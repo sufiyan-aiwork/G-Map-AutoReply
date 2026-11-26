@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, ShieldAlert, CheckCircle2, Info, X, Loader2 } from 'lucide-react';
 
 export default function ConfirmDialog({
@@ -51,30 +52,30 @@ export default function ConfirmDialog({
   const style = variants[variant] || variants.primary;
   const Icon = style.Icon;
 
-  return (
+  const dialogContent = (
     <div
-      className="fixed inset-0 z-50 bg-[#00142b]/60 backdrop-blur-sm flex items-center justify-center p-4"
+      className="fixed inset-0 z-[60] bg-[#00142b]/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 overflow-y-auto"
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-dialog-title"
       onClick={() => !isLoading && onCancel?.()}
     >
       <div
-        className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-[#e2e8f0] overflow-hidden modal-enter"
+        className="bg-white rounded-2xl max-w-md w-full shadow-2xl border border-[#e2e8f0] overflow-hidden modal-enter max-h-[88vh] sm:max-h-[90vh] flex flex-col my-auto min-w-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="h-1 w-full tz-top-accent" />
-        <div className="p-6">
+        <div className="h-1 w-full tz-top-accent shrink-0" />
+        <div className="p-5 sm:p-6 overflow-y-auto">
           <div className="flex items-start justify-between gap-4">
-            <div className="flex items-start gap-3.5">
+            <div className="flex items-start gap-3.5 min-w-0">
               <div className={`p-2.5 rounded-xl border shrink-0 ${style.iconBg}`}>
                 <Icon size={20} />
               </div>
-              <div>
+              <div className="min-w-0">
                 <h3 id="confirm-dialog-title" className="text-base font-bold text-[#1a1a2e]">
                   {title}
                 </h3>
-                <p className="text-xs text-[#64748b] mt-1.5 leading-relaxed">
+                <p className="text-xs text-[#64748b] mt-1.5 leading-relaxed break-words">
                   {description}
                 </p>
               </div>
@@ -84,7 +85,7 @@ export default function ConfirmDialog({
               onClick={onCancel}
               disabled={isLoading}
               aria-label="Close confirmation dialog"
-              className="text-slate-400 hover:text-[#1a1a2e] hover:bg-slate-100 p-1.5 rounded-lg transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 disabled:opacity-50"
+              className="text-slate-400 hover:text-[#1a1a2e] hover:bg-slate-100 p-1.5 rounded-lg transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 disabled:opacity-50 shrink-0"
             >
               <X size={18} />
             </button>
@@ -113,4 +114,8 @@ export default function ConfirmDialog({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined'
+    ? createPortal(dialogContent, document.body)
+    : dialogContent;
 }
