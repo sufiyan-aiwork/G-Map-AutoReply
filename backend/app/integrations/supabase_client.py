@@ -139,12 +139,24 @@ class DatabaseClient:
 
     def __init__(self):
         self.supabase_url = (settings.SUPABASE_URL or "").strip()
-        self.supabase_key = (settings.SUPABASE_SERVICE_ROLE_KEY or settings.SUPABASE_KEY or "").strip()
-        self.is_connected_to_supabase = bool(
-            self.supabase_url 
-            and self.supabase_key 
-            and not self.supabase_url.startswith("https://your-")
-        )
+        service_role_key = (settings.SUPABASE_SERVICE_ROLE_KEY or "").strip()
+        anon_key = (settings.SUPABASE_KEY or "").strip()
+
+        is_valid_url = bool(self.supabase_url and not self.supabase_url.startswith("https://your-"))
+        is_valid_service_key = bool(service_role_key and not service_role_key.startswith("your-"))
+
+        if is_valid_url and not is_valid_service_key:
+            if anon_key and not anon_key.startswith("your-"):
+                logger.error(
+                    "SUPABASE_SERVICE_ROLE_KEY is missing or placeholder. "
+                    "Refusing to fall back to SUPABASE_KEY (anon/publishable) for backend database operations."
+                )
+            else:
+                logger.warning("SUPABASE_SERVICE_ROLE_KEY is not configured; using local memory store.")
+
+        # Backend Supabase operations strictly require SUPABASE_SERVICE_ROLE_KEY (never anon key)
+        self.supabase_key = service_role_key if is_valid_service_key else ""
+        self.is_connected_to_supabase = bool(is_valid_url and is_valid_service_key)
         
         # Local fallback store
         self._templates: List[Dict[str, Any]] = [dict(t) for t in INITIAL_TEMPLATES]
@@ -171,11 +183,12 @@ class DatabaseClient:
         if not self.is_connected_to_supabase:
             return {
                 "configured": False,
+                "using_service_role": False,
                 "status": "offline_mode",
-                "message": "Supabase credentials are not configured; using local memory store."
+                "message": "Supabase service_role credentials are not configured; using local memory store."
             }
 
-        tables = ["reply_templates", "reviews", "published_replies", "business_config", "system_logs"]
+        tables = ["reply_templates", "reviews", "published_replies", "business_config", "system_logs", "admin_users"]
         table_status = {}
         all_tables_ready = True
 
@@ -186,6 +199,7 @@ class DatabaseClient:
                     return {
                         "configured": True,
                         "connected": False,
+                        "using_service_role": True,
                         "status": "auth_error",
                         "error": f"HTTP {root_res.status_code}: {root_res.text}"
                     }
@@ -201,11 +215,12 @@ class DatabaseClient:
             return {
                 "configured": True,
                 "connected": True,
+                "using_service_role": True,
                 "supabase_url": self.supabase_url,
                 "tables_ready": all_tables_ready,
                 "tables": table_status,
                 "status": "ready" if all_tables_ready else "pending_sql_schema",
-                "message": "Connected to Supabase! All 5 tables are active and ready." if all_tables_ready else "Connected to Supabase, but some tables are missing."
+                "message": "Connected to Supabase via service_role! All 6 tables are active and ready." if all_tables_ready else "Connected to Supabase, but some tables are missing."
             }
         except Exception as e:
             return {

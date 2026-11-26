@@ -145,16 +145,37 @@ CREATE TRIGGER trg_business_config_updated_at
 
 -- ====================================================================
 -- ROW LEVEL SECURITY (RLS) POLICIES & PERMISSIONS
--- Grant full table permissions to API roles (service_role, anon, authenticated)
+-- Restrict all table, sequence, and routine access strictly to service_role.
+-- Revoke public/anon/authenticated PostgREST access across all tables.
 -- ====================================================================
-GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL TABLES IN SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO anon, authenticated, service_role;
-GRANT ALL ON ALL ROUTINES IN SCHEMA public TO anon, authenticated, service_role;
+REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM anon, authenticated;
+REVOKE ALL ON ALL ROUTINES IN SCHEMA public FROM anon, authenticated;
 
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO anon, authenticated, service_role;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON SEQUENCES FROM anon, authenticated;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON ROUTINES FROM anon, authenticated;
+
+GRANT USAGE ON SCHEMA public TO service_role;
+GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+GRANT ALL ON ALL ROUTINES IN SCHEMA public TO service_role;
+
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON ROUTINES TO service_role;
+
+REVOKE ALL ON TABLE reviews FROM anon, authenticated;
+REVOKE ALL ON TABLE reply_templates FROM anon, authenticated;
+REVOKE ALL ON TABLE published_replies FROM anon, authenticated;
+REVOKE ALL ON TABLE business_config FROM anon, authenticated;
+REVOKE ALL ON TABLE system_logs FROM anon, authenticated;
+
+GRANT ALL ON TABLE reviews TO service_role;
+GRANT ALL ON TABLE reply_templates TO service_role;
+GRANT ALL ON TABLE published_replies TO service_role;
+GRANT ALL ON TABLE business_config TO service_role;
+GRANT ALL ON TABLE system_logs TO service_role;
 
 ALTER TABLE reviews ENABLE ROW LEVEL SECURITY;
 ALTER TABLE reply_templates ENABLE ROW LEVEL SECURITY;
@@ -162,12 +183,46 @@ ALTER TABLE published_replies ENABLE ROW LEVEL SECURITY;
 ALTER TABLE business_config ENABLE ROW LEVEL SECURITY;
 ALTER TABLE system_logs ENABLE ROW LEVEL SECURITY;
 
--- Allow access policies
-CREATE POLICY "Allow service role full access on reviews" ON reviews FOR ALL USING (true);
-CREATE POLICY "Allow service role full access on reply_templates" ON reply_templates FOR ALL USING (true);
-CREATE POLICY "Allow service role full access on published_replies" ON published_replies FOR ALL USING (true);
-CREATE POLICY "Allow service role full access on business_config" ON business_config FOR ALL USING (true);
-CREATE POLICY "Allow service role full access on system_logs" ON system_logs FOR ALL USING (true);
+-- Service-role-only RLS policies (explicitly scoped TO service_role with USING + WITH CHECK)
+DROP POLICY IF EXISTS "Allow service role full access on reviews" ON reviews;
+CREATE POLICY "Allow service role full access on reviews"
+    ON reviews
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow service role full access on reply_templates" ON reply_templates;
+CREATE POLICY "Allow service role full access on reply_templates"
+    ON reply_templates
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow service role full access on published_replies" ON published_replies;
+CREATE POLICY "Allow service role full access on published_replies"
+    ON published_replies
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow service role full access on business_config" ON business_config;
+CREATE POLICY "Allow service role full access on business_config"
+    ON business_config
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
+
+DROP POLICY IF EXISTS "Allow service role full access on system_logs" ON system_logs;
+CREATE POLICY "Allow service role full access on system_logs"
+    ON system_logs
+    FOR ALL
+    TO service_role
+    USING (true)
+    WITH CHECK (true);
 
 -- ====================================================================
 -- TABLE 6: admin_users
