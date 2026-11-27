@@ -14,6 +14,7 @@ class Settings(BaseSettings):
     APP_NAME: str = "Techzone Review Reply Automation"
     BUSINESS_NAME: str = "Techzone Academy"
     ENVIRONMENT: str = "development"
+    TIMEZONE: str = "Asia/Kolkata"
     
     # API & Server Config
     PORT: int = 8000

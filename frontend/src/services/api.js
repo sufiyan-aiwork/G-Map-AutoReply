@@ -16,8 +16,9 @@ async function request(endpoint, options = {}) {
   const { skipUnauthorizedHandler, ...fetchOptions } = options;
   const method = (fetchOptions.method || 'GET').toUpperCase();
   const isUnsafeMethod = !['GET', 'HEAD', 'OPTIONS'].includes(method);
+  const hasBody = fetchOptions.body !== undefined && fetchOptions.body !== null;
   const headers = {
-    'Content-Type': 'application/json',
+    ...(hasBody ? { 'Content-Type': 'application/json' } : {}),
     ...(isUnsafeMethod && csrfToken ? { 'X-CSRF-Token': csrfToken } : {}),
     ...(fetchOptions.headers || {}),
   };
@@ -39,7 +40,11 @@ async function request(endpoint, options = {}) {
       const errorData = await response.json().catch(() => ({}));
       throw new Error(errorData.detail || `Request failed with status ${response.status}`);
     }
-    const data = await response.json();
+    if (response.status === 204) {
+      return null;
+    }
+    const rawText = await response.text();
+    const data = rawText ? JSON.parse(rawText) : null;
     if (data && typeof data === 'object' && 'csrf_token' in data) {
       csrfToken = data.csrf_token || null;
     }
@@ -74,7 +79,10 @@ export const api = {
     }),
 
   // Dashboard Summary & Analytics
-  getDashboardSummary: () => request('/api/dashboard/summary'),
+  getDashboardSummary: (days = 'all') => {
+    const qs = days != null && days !== 'all' ? `?days=${encodeURIComponent(days)}` : '';
+    return request(`/api/dashboard/summary${qs}`);
+  },
 
   // Customer Reviews
   getReviews: (params = {}) => {

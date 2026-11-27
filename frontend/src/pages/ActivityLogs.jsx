@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import {
   History,
   Search,
@@ -367,29 +368,31 @@ export default function ActivityLogs({ logs, isLoading, onRefresh, isRefreshing 
         </div>
       )}
 
-      {/* Log Entry Detail Modal */}
-      {selectedLog && (
-        <div
-          className="fixed inset-0 z-50 bg-[#00142b]/60 backdrop-blur-sm flex items-center justify-center p-4"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="log-modal-title"
-          onClick={() => setSelectedLog(null)}
-        >
+      {/* Log Entry Detail Modal (portaled to document.body so viewport centering is unaffected by page transforms or scroll containers) */}
+      {selectedLog && (() => {
+        const logModal = (
           <div
-            className="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-[#e2e8f0] overflow-hidden modal-enter"
-            onClick={(e) => e.stopPropagation()}
+            className="fixed inset-0 z-50 bg-[#00142b]/60 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="log-modal-title"
+            onClick={() => setSelectedLog(null)}
           >
-            <div className="h-1 w-full tz-top-accent" />
-            <div className="p-6 space-y-4">
-              <div className="flex items-start justify-between gap-4 pb-3 border-b border-[#e2e8f0]">
-                <div className="flex items-center gap-2.5">
+            <div
+              className="bg-white rounded-2xl max-w-xl w-full shadow-2xl border border-[#e2e8f0] overflow-hidden modal-enter max-h-[88vh] sm:max-h-[90vh] flex flex-col my-auto min-w-0"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="h-1 w-full tz-top-accent shrink-0" />
+
+              {/* Pinned Modal Header */}
+              <div className="px-5 pt-4 pb-3.5 sm:px-6 sm:pt-5 sm:pb-4 border-b border-[#e2e8f0] flex items-center justify-between gap-3 shrink-0 bg-white">
+                <div className="flex items-center gap-2.5 min-w-0">
                   {getEventIcon(selectedLog.status)}
-                  <div>
-                    <h2 id="log-modal-title" className="font-heading text-base font-bold text-[#1a1a2e]">
+                  <div className="min-w-0">
+                    <h2 id="log-modal-title" className="font-heading text-base font-bold text-[#1a1a2e] truncate">
                       Audit Log Details
                     </h2>
-                    <p className="text-xs text-[#64748b] tabular-nums mt-0.5">
+                    <p className="text-xs text-[#64748b] tabular-nums mt-0.5 truncate">
                       {new Date(selectedLog.created_at).toLocaleString()}
                     </p>
                   </div>
@@ -398,45 +401,49 @@ export default function ActivityLogs({ logs, isLoading, onRefresh, isRefreshing 
                   type="button"
                   onClick={() => setSelectedLog(null)}
                   aria-label="Close log details"
-                  className="p-1.5 text-slate-400 hover:text-[#1a1a2e] hover:bg-slate-100 rounded-lg transition-colors"
+                  className="p-1.5 text-slate-400 hover:text-[#1a1a2e] hover:bg-slate-100 rounded-lg transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 shrink-0"
                 >
                   <X size={18} />
                 </button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0]">
-                  <span className="text-[11px] font-semibold uppercase text-[#64748b] block mb-1">
-                    Event Type
-                  </span>
-                  <code className="font-mono font-bold text-[#1a1a2e]">{selectedLog.event_type}</code>
+              {/* Scrollable Modal Body */}
+              <div className="px-5 py-4 sm:px-6 sm:py-5 space-y-4 overflow-y-auto flex-1 min-h-0 overscroll-contain">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] min-w-0">
+                    <span className="text-[11px] font-semibold uppercase text-[#64748b] block mb-1">
+                      Event Type
+                    </span>
+                    <code className="font-mono font-bold text-[#1a1a2e] break-all">{selectedLog.event_type}</code>
+                  </div>
+                  <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] min-w-0">
+                    <span className="text-[11px] font-semibold uppercase text-[#64748b] block mb-1">
+                      Status
+                    </span>
+                    <StatusBadge status={selectedLog.status || 'info'} />
+                  </div>
                 </div>
-                <div className="p-3 rounded-xl bg-[#f8fafc] border border-[#e2e8f0]">
-                  <span className="text-[11px] font-semibold uppercase text-[#64748b] block mb-1">
-                    Status
+
+                <div>
+                  <span className="text-[11px] font-semibold uppercase text-[#64748b] block mb-1.5">
+                    Event Message
                   </span>
-                  <StatusBadge status={selectedLog.status || 'info'} />
+                  <div className="p-3.5 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] text-xs text-[#1a1a2e] leading-relaxed whitespace-pre-wrap break-words">
+                    {selectedLog.description}
+                  </div>
                 </div>
               </div>
 
-              <div>
-                <span className="text-[11px] font-semibold uppercase text-[#64748b] block mb-1.5">
-                  Event Message
-                </span>
-                <div className="p-3.5 rounded-xl bg-[#f8fafc] border border-[#e2e8f0] text-xs text-[#1a1a2e] leading-relaxed whitespace-pre-wrap break-words max-h-56 overflow-y-auto">
-                  {selectedLog.description}
-                </div>
-              </div>
-
-              <div className="flex items-center justify-between pt-2 border-t border-[#e2e8f0] text-xs">
-                <span className="text-[#64748b] font-mono truncate max-w-[220px]" title={String(selectedLog.id)}>
+              {/* Pinned Modal Footer */}
+              <div className="px-5 py-3.5 sm:px-6 sm:py-4 border-t border-[#e2e8f0] bg-[#f8fafc] flex flex-wrap items-center justify-between gap-2 text-xs shrink-0">
+                <span className="text-[#64748b] font-mono truncate max-w-[190px] sm:max-w-[240px]" title={String(selectedLog.id)}>
                   ID: {selectedLog.id}
                 </span>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 ml-auto">
                   <button
                     type="button"
                     onClick={() => handleCopyDescription(selectedLog)}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#1a1a2e] rounded-lg font-semibold transition-all duration-150 active:scale-[0.98]"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e2e8f0] hover:bg-[#e2e8f0]/60 text-[#1a1a2e] rounded-lg font-semibold transition-all duration-150 active:scale-[0.98]"
                   >
                     {copiedId === selectedLog.id ? (
                       <>
@@ -461,8 +468,12 @@ export default function ActivityLogs({ logs, isLoading, onRefresh, isRefreshing 
               </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+
+        return typeof document !== 'undefined'
+          ? createPortal(logModal, document.body)
+          : logModal;
+      })()}
     </div>
   );
 }

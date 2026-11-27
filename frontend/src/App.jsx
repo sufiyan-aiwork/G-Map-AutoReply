@@ -18,6 +18,7 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState('overview');
   const [reviewsFilterPreset, setReviewsFilterPreset] = useState(null);
   const [summary, setSummary] = useState(null);
+  const [summaryDays, setSummaryDays] = useState('all');
   const [reviews, setReviews] = useState([]);
   const [templates, setTemplates] = useState([]);
   const [automationStatus, setAutomationStatus] = useState(null);
@@ -33,71 +34,82 @@ export default function App() {
   const [showResumeConfirm, setShowResumeConfirm] = useState(false);
   const [isTogglingAutomation, setIsTogglingAutomation] = useState(false);
 
-  const isRefreshingRef = useRef(false);
+  const activeLoadsRef = useRef(0);
+  const loadDataSeqRef = useRef(0);
   const isSyncingRef = useRef(false);
-  const toastFadeTimerRef = useRef(null);
-  const toastClearTimerRef = useRef(null);
+  const summaryDaysRef = useRef('all');
+  const summaryRequestSeqRef = useRef(0);
 
   useEffect(() => {
     isSyncingRef.current = isSyncing;
   }, [isSyncing]);
 
-  const dismissToast = () => {
-    if (toastFadeTimerRef.current) clearTimeout(toastFadeTimerRef.current);
-    if (toastClearTimerRef.current) clearTimeout(toastClearTimerRef.current);
-    setIsToastExiting(true);
-    toastClearTimerRef.current = setTimeout(() => {
+  useEffect(() => {
+    summaryDaysRef.current = summaryDays;
+  }, [summaryDays]);
+
+  useEffect(() => {
+    if (!toastMessage?.duration || isToastExiting) return undefined;
+    const fadeTimer = setTimeout(() => {
+      setIsToastExiting(true);
+    }, toastMessage.duration);
+    return () => clearTimeout(fadeTimer);
+  }, [toastMessage, isToastExiting]);
+
+  useEffect(() => {
+    if (!isToastExiting) return undefined;
+    const clearTimer = setTimeout(() => {
       setToastMessage(null);
       setIsToastExiting(false);
     }, 180);
+    return () => clearTimeout(clearTimer);
+  }, [isToastExiting]);
+
+  const dismissToast = () => {
+    setIsToastExiting(true);
   };
 
   const showToast = (type, text, duration = 5000) => {
-    if (toastFadeTimerRef.current) clearTimeout(toastFadeTimerRef.current);
-    if (toastClearTimerRef.current) clearTimeout(toastClearTimerRef.current);
     setIsToastExiting(false);
-    setToastMessage({ type, text });
-    if (duration > 0) {
-      toastFadeTimerRef.current = setTimeout(() => {
-        setIsToastExiting(true);
-        toastClearTimerRef.current = setTimeout(() => {
-          setToastMessage(null);
-          setIsToastExiting(false);
-        }, 180);
-      }, duration);
-    }
+    setToastMessage({ type, text, duration, _nonce: Date.now() });
   };
 
   const loadData = async (isBackground = false) => {
-    if (isRefreshingRef.current) return;
-    isRefreshingRef.current = true;
+    if (isBackground && activeLoadsRef.current > 0) return;
+    activeLoadsRef.current += 1;
+    const loadSeq = ++loadDataSeqRef.current;
     if (!isBackground) {
       setIsRefreshing(true);
       setErrorMessage(null);
     }
     try {
+      const requestSeq = ++summaryRequestSeqRef.current;
+      const requestedDays = summaryDaysRef.current;
       const [sumRes, revRes, tplRes, autoRes, logRes] = await Promise.all([
-        api.getDashboardSummary(),
+        api.getDashboardSummary(requestedDays),
         api.getReviews(),
         api.getTemplates(),
         api.getAutomationStatus(),
         api.getLogs(),
       ]);
 
-      if (sumRes) setSummary(sumRes);
+      if (loadSeq !== loadDataSeqRef.current) return;
+      if (sumRes && requestSeq === summaryRequestSeqRef.current && summaryDaysRef.current === requestedDays) {
+        setSummary(sumRes);
+      }
       if (revRes) setReviews(revRes);
       if (tplRes) setTemplates(tplRes);
       if (autoRes) setAutomationStatus(autoRes);
       if (logRes) setLogs(logRes);
     } catch (err) {
       console.error('Failed to load application data:', err);
-      if (!isBackground) {
+      if (!isBackground && loadSeq === loadDataSeqRef.current) {
         setErrorMessage('Could not connect to backend API. Please verify the FastAPI server is running on port 8000.');
       }
     } finally {
-      isRefreshingRef.current = false;
+      activeLoadsRef.current = Math.max(0, activeLoadsRef.current - 1);
       setIsInitialLoading(false);
-      if (!isBackground) {
+      if (activeLoadsRef.current === 0) {
         setIsRefreshing(false);
       }
     }
@@ -106,6 +118,12 @@ export default function App() {
   useEffect(() => {
     setUnauthorizedHandler(() => {
       setAdminUser(null);
+      setSummary(null);
+      setReviews([]);
+      setTemplates([]);
+      setAutomationStatus(null);
+      setLogs([]);
+      setIsInitialLoading(true);
       setSessionNotice('Your administrator session expired or was signed out. Please sign in again.');
     });
 
@@ -156,8 +174,6 @@ export default function App() {
 
     return () => {
       setUnauthorizedHandler(null);
-      if (toastFadeTimerRef.current) clearTimeout(toastFadeTimerRef.current);
-      if (toastClearTimerRef.current) clearTimeout(toastClearTimerRef.current);
     };
   }, []);
 
@@ -170,7 +186,7 @@ export default function App() {
     loadData();
 
     const intervalId = setInterval(() => {
-      if (!isSyncingRef.current && !isRefreshingRef.current) {
+      if (!isSyncingRef.current && activeLoadsRef.current === 0) {
         loadData(true);
       }
     }, 30000);
@@ -201,9 +217,25 @@ export default function App() {
     }
   };
 
+  const handlePeriodChange = async (period) => {
+    const normalized = period === 'all' ? 'all' : Number(period);
+    if (normalized !== 'all' && ![7, 14, 21, 30].includes(normalized)) return;
+    setSummaryDays(normalized);
+    summaryDaysRef.current = normalized;
+    const seq = ++summaryRequestSeqRef.current;
+    try {
+      const sumRes = await api.getDashboardSummary(normalized);
+      if (sumRes && seq === summaryRequestSeqRef.current) {
+        setSummary(sumRes);
+      }
+    } catch (err) {
+      console.error('Failed to filter dashboard summary:', err);
+    }
+  };
+
   const handleNavigate = (tab, filterPreset = null) => {
-    if (tab === 'reviews' && filterPreset) {
-      setReviewsFilterPreset({ ...filterPreset, _nonce: Date.now() });
+    if (tab === 'reviews') {
+      setReviewsFilterPreset(filterPreset ? { ...filterPreset, _nonce: Date.now() } : null);
     }
     setCurrentTab(tab);
   };
@@ -317,6 +349,8 @@ export default function App() {
             isLoading={isInitialLoading}
             onNavigate={handleNavigate}
             onSimulateReview={handleSimulateReview}
+            selectedDays={summaryDays}
+            onChangePeriod={handlePeriodChange}
           />
         );
       case 'reviews':
@@ -353,6 +387,8 @@ export default function App() {
             isLoading={isInitialLoading}
             onNavigate={handleNavigate}
             onSimulateReview={handleSimulateReview}
+            selectedDays={summaryDays}
+            onChangePeriod={handlePeriodChange}
           />
         );
     }

@@ -396,3 +396,151 @@ async def test_http_errors_recorded_correctly():
             assert str(code) in res["error"]
 
 
+@pytest.mark.asyncio
+async def test_dashboard_summary_days_filter_and_validation(monkeypatch):
+    from datetime import datetime, timedelta
+    from unittest.mock import patch
+    from app.api.dashboard import resolve_configured_timezone
+    from app.integrations.google_business import google_client
+
+    monkeypatch.setattr(settings, "TIMEZONE", "Asia/Kolkata")
+    tz, tz_name = resolve_configured_timezone()
+    assert tz_name == "Asia/Kolkata"
+
+    now_tz = datetime.now(tz).replace(hour=12, minute=0, second=0, microsecond=0)
+    db._reviews = [
+        # Inside 7 days (today & 6 days ago): 1 published (5*), 1 failed (1*)
+        {
+            "id": "rev-d0",
+            "google_review_id": "AbFvO_d0",
+            "location_id": "locations/loc1",
+            "star_rating": 5,
+            "publishing_status": "published",
+            "processing_status": "processed",
+            "review_created_at": now_tz.isoformat(),
+        },
+        {
+            "id": "rev-d6",
+            "google_review_id": "AbFvO_d6",
+            "location_id": "locations/loc1",
+            "star_rating": 1,
+            "publishing_status": "failed",
+            "processing_status": "failed",
+            "review_created_at": (now_tz - timedelta(days=6)).isoformat(),
+        },
+        # Inside 14 days (10 days ago): recent reply_published_at must NOT pull old review into 7-day window
+        {
+            "id": "rev-d10",
+            "google_review_id": "AbFvO_d10",
+            "location_id": "locations/loc1",
+            "star_rating": 4,
+            "publishing_status": "published",
+            "processing_status": "processed",
+            "review_created_at": (now_tz - timedelta(days=10)).isoformat(),
+            "reply_published_at": now_tz.isoformat(),
+        },
+        # Inside 21 days (20 days ago)
+        {
+            "id": "rev-d20",
+            "google_review_id": "AbFvO_d20",
+            "location_id": "locations/loc1",
+            "star_rating": 2,
+            "publishing_status": "pending",
+            "processing_status": "pending",
+            "review_created_at": (now_tz - timedelta(days=20)).isoformat(),
+        },
+        # Inside 30 days (29 days ago) and outside 30 days (35 days ago)
+        {
+            "id": "rev-d29",
+            "google_review_id": "AbFvO_d29",
+            "location_id": "locations/loc1",
+            "star_rating": 3,
+            "publishing_status": "verification_pending",
+            "processing_status": "pending",
+            "review_created_at": (now_tz - timedelta(days=29)).isoformat(),
+        },
+        {
+            "id": "rev-d35",
+            "google_review_id": "AbFvO_d35",
+            "location_id": "locations/loc1",
+            "star_rating": 5,
+            "publishing_status": "published",
+            "processing_status": "processed",
+            "review_created_at": (now_tz - timedelta(days=35)).isoformat(),
+        },
+    ]
+
+    with patch.object(google_client, "client_id", None):
+        async with await _new_client() as ac:
+            r_all = await ac.get("/api/dashboard/summary")
+            assert r_all.status_code == 200
+            d_all = r_all.json()
+            assert d_all["period_days"] is None
+            assert d_all["total_reviews"] == 6
+            assert d_all["positive_reviews_count"] == 4
+            assert d_all["negative_reviews_count"] == 2
+            assert d_all["total_published_replies"] == 3
+            assert d_all["failed_publishing_attempts"] == 1
+            assert d_all["pending_reviews_count"] == 2
+            assert d_all["star_rating_distribution"] == {"5": 2, "4": 1, "3": 1, "2": 1, "1": 1}
+
+            r7 = await ac.get("/api/dashboard/summary?days=7")
+            assert r7.status_code == 200
+            d7 = r7.json()
+            assert d7["period_days"] == 7
+            assert d7["timezone"] == "Asia/Kolkata"
+            assert d7["total_reviews"] == 2
+            assert d7["positive_reviews_count"] == 1
+            assert d7["negative_reviews_count"] == 1
+            assert d7["total_published_replies"] == 1
+            assert d7["failed_publishing_attempts"] == 1
+            assert d7["pending_reviews_count"] == 0
+            assert d7["average_star_rating"] == 3.0
+            assert d7["star_rating_distribution"] == {"5": 1, "4": 0, "3": 0, "2": 0, "1": 1}
+
+            r14 = await ac.get("/api/dashboard/summary?days=14")
+            assert r14.status_code == 200
+            assert r14.json()["total_reviews"] == 3
+            assert r14.json()["total_published_replies"] == 2
+
+            r21 = await ac.get("/api/dashboard/summary?days=21")
+            assert r21.status_code == 200
+            assert r21.json()["total_reviews"] == 4
+            assert r21.json()["pending_reviews_count"] == 1
+
+            r30 = await ac.get("/api/dashboard/summary?days=30")
+            assert r30.status_code == 200
+            d30 = r30.json()
+            assert d30["total_reviews"] == 5
+            assert d30["pending_reviews_count"] == 2
+            assert d30["total_published_replies"] == 2
+            assert d30["failed_publishing_attempts"] == 1
+
+            # Reject unsupported day intervals
+            for bad_days in (0, 5, 15, 90):
+                bad_res = await ac.get(f"/api/dashboard/summary?days={bad_days}")
+                assert bad_res.status_code == 400
+
+
+def test_calendar_day_boundary_respects_configured_timezone():
+    from datetime import datetime, timezone
+    from app.api.dashboard import filter_reviews_by_calendar_days, resolve_configured_timezone
+
+    tz, _ = resolve_configured_timezone("Asia/Kolkata")
+    # 2026-11-26 01:00 IST == 2026-11-25 19:30 UTC
+    # Last 7 IST calendar days (including Nov 26) starts 2026-11-20 00:00 IST == 2026-11-19 18:30 UTC
+    now_utc = datetime(2026, 11, 25, 19, 30, 0, tzinfo=timezone.utc)
+    reviews = [
+        {"id": "before_ist_midnight", "review_created_at": "2026-11-19T18:29:59Z"},
+        {"id": "at_ist_midnight", "review_created_at": "2026-11-19T18:30:00Z"},
+        {"id": "today_ist", "review_created_at": "2026-11-25T19:00:00Z"},
+        {"id": "missing_date", "review_created_at": None, "created_at": "2026-11-25T19:00:00Z"},
+    ]
+
+    filtered, start_date, end_date = filter_reviews_by_calendar_days(reviews, 7, tz, now_dt=now_utc)
+    assert start_date.isoformat() == "2026-11-20"
+    assert end_date.isoformat() == "2026-11-26"
+    assert [r["id"] for r in filtered] == ["at_ist_midnight", "today_ist"]
+
+
+

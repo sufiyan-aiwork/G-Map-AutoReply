@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import {
   MessageSquare,
   ThumbsUp,
@@ -10,12 +10,22 @@ import {
   ArrowRight,
   Zap,
   Sparkles,
-  Loader2
+  Loader2,
+  ChevronDown,
+  Check
 } from 'lucide-react';
 import StatCard from '../components/StatCard';
 import StarRating from '../components/StarRating';
 import StatusBadge from '../components/StatusBadge';
 import { KpiGridSkeleton, CardSkeleton } from '../components/SkeletonLoader';
+
+const DATE_RANGE_OPTIONS = [
+  { value: 7, label: 'Last 7 Days' },
+  { value: 14, label: 'Last 14 Days' },
+  { value: 21, label: 'Last 21 Days' },
+  { value: 30, label: 'Last 30 Days' },
+];
+const VALID_RANGE_DAYS = new Set([7, 14, 21, 30]);
 
 const DEFAULT_POSITIVE =
   'Thank you for sharing your valuable feedback with Techzone Academy! We are happy to have you as part of our learning community. We truly appreciate your support!';
@@ -30,12 +40,251 @@ const SAMPLE_PRESETS = [
   { rating: 1, text: 'Class schedule was changed without early communication. Disappointed.' },
 ];
 
-export default function Overview({ summary, reviews, templates, isLoading, onNavigate, onSimulateReview }) {
+function parseReviewTimestampMs(rawValue) {
+  if (!rawValue) return null;
+  if (rawValue instanceof Date) {
+    const ms = rawValue.getTime();
+    return Number.isNaN(ms) ? null : ms;
+  }
+  if (typeof rawValue !== 'string') return null;
+  const trimmed = rawValue.trim();
+  if (!trimmed) return null;
+  const hasTzInfo = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+  const normalized = hasTzInfo ? trimmed : `${trimmed}Z`;
+  const ms = Date.parse(normalized);
+  return Number.isNaN(ms) ? null : ms;
+}
+
+function toCalendarDateString(dateObj, timeZone) {
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timeZone || 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).formatToParts(dateObj);
+    const y = parts.find((p) => p.type === 'year')?.value;
+    const m = parts.find((p) => p.type === 'month')?.value;
+    const d = parts.find((p) => p.type === 'day')?.value;
+    if (y && m && d) return `${y}-${m}-${d}`;
+  } catch {
+    // Fallback for fixed-offset strings such as +05:30
+  }
+
+  const offsetMatch = /^(?:UTC)?([+-])(\d{2}):?(\d{2})$/i.exec((timeZone || '').trim());
+  if (offsetMatch) {
+    const sign = offsetMatch[1] === '+' ? 1 : -1;
+    const offsetMinutes = sign * (parseInt(offsetMatch[2], 10) * 60 + parseInt(offsetMatch[3], 10));
+    const shifted = new Date(dateObj.getTime() + offsetMinutes * 60000);
+    return shifted.toISOString().slice(0, 10);
+  }
+
+  if ((timeZone || '').trim().toUpperCase() === 'UTC') {
+    return dateObj.toISOString().slice(0, 10);
+  }
+
+  const istFallback = new Date(dateObj.getTime() + 330 * 60000);
+  return istFallback.toISOString().slice(0, 10);
+}
+
+function shiftCalendarDateString(ymd, deltaDays) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const shifted = new Date(Date.UTC(y, m - 1, d + deltaDays));
+  return shifted.toISOString().slice(0, 10);
+}
+
+export default function Overview({
+  summary,
+  reviews,
+  templates,
+  isLoading,
+  onNavigate,
+  onSimulateReview,
+  selectedDays,
+  onChangePeriod,
+}) {
+  const [localFilter, setLocalFilter] = useState('all');
+  const [dropdownDays, setDropdownDays] = useState(30);
+  const [hasUserSelectedPeriod, setHasUserSelectedPeriod] = useState(false);
+
+  const [isDropdownMounted, setIsDropdownMounted] = useState(false);
+  const [isDropdownClosing, setIsDropdownClosing] = useState(false);
+  const [highlightedIdx, setHighlightedIdx] = useState(3);
+
   const [testRating, setTestRating] = useState(5);
   const [testText, setTestText] = useState(SAMPLE_PRESETS[0].text);
   const [isSimulating, setIsSimulating] = useState(false);
   const [simMessage, setSimMessage] = useState(null);
   const [recentFilter, setRecentFilter] = useState('all');
+
+  const dropdownRef = useRef(null);
+  const dropdownButtonRef = useRef(null);
+  const closeTimerRef = useRef(null);
+
+  const activeFilter =
+    selectedDays === 'all' || VALID_RANGE_DAYS.has(selectedDays) ? selectedDays : localFilter;
+  const isAllTimeActive = activeFilter === 'all';
+  const displayedRangeDays = VALID_RANGE_DAYS.has(activeFilter) ? activeFilter : dropdownDays;
+  const displayedRangeLabel = `Last ${displayedRangeDays} Days`;
+  const configuredTimezone = summary?.timezone || 'Asia/Kolkata';
+
+  const closeDropdown = (restoreFocus = false) => {
+    if (!isDropdownMounted || isDropdownClosing) return;
+    setIsDropdownClosing(true);
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = setTimeout(() => {
+      setIsDropdownMounted(false);
+      setIsDropdownClosing(false);
+      if (restoreFocus) {
+        dropdownButtonRef.current?.focus();
+      }
+    }, 130);
+  };
+
+  const openDropdown = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    const currentIdx = DATE_RANGE_OPTIONS.findIndex((opt) => opt.value === displayedRangeDays);
+    setHighlightedIdx(currentIdx >= 0 ? currentIdx : 3);
+    setIsDropdownClosing(false);
+    setIsDropdownMounted(true);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isDropdownMounted) return undefined;
+    const handlePointerDown = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        closeDropdown(false);
+      }
+    };
+    const handleGlobalKeyDown = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        closeDropdown(true);
+      }
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleGlobalKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleGlobalKeyDown);
+    };
+  }, [isDropdownMounted, isDropdownClosing]);
+
+  const handleSelectAllTime = () => {
+    closeDropdown(false);
+    setHasUserSelectedPeriod(true);
+    setLocalFilter('all');
+    if (onChangePeriod) {
+      onChangePeriod('all');
+    }
+  };
+
+  const handleSelectRange = (days) => {
+    setHasUserSelectedPeriod(true);
+    setDropdownDays(days);
+    setLocalFilter(days);
+    closeDropdown(false);
+    if (onChangePeriod) {
+      onChangePeriod(days);
+    }
+  };
+
+  const handleDropdownKeyDown = (e) => {
+    const isOpen = isDropdownMounted && !isDropdownClosing;
+    if (!isOpen) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openDropdown();
+      }
+      return;
+    }
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedIdx((prev) => (prev + 1) % DATE_RANGE_OPTIONS.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedIdx((prev) => (prev - 1 + DATE_RANGE_OPTIONS.length) % DATE_RANGE_OPTIONS.length);
+    } else if (e.key === 'Home') {
+      e.preventDefault();
+      setHighlightedIdx(0);
+    } else if (e.key === 'End') {
+      e.preventDefault();
+      setHighlightedIdx(DATE_RANGE_OPTIONS.length - 1);
+    } else if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      const target = DATE_RANGE_OPTIONS[highlightedIdx];
+      if (target) handleSelectRange(target.value);
+    } else if (e.key === 'Tab') {
+      closeDropdown(false);
+    }
+  };
+
+  const { periodReviews, derivedStats } = useMemo(() => {
+    let matching;
+    if (activeFilter === 'all') {
+      matching = reviews || [];
+    } else {
+      const useBackendBounds =
+        summary?.period_days === activeFilter &&
+        Boolean(summary?.period_start_date) &&
+        Boolean(summary?.period_end_date);
+
+      const endDateStr = useBackendBounds
+        ? summary.period_end_date
+        : toCalendarDateString(new Date(), configuredTimezone);
+      const startDateStr = useBackendBounds
+        ? summary.period_start_date
+        : shiftCalendarDateString(endDateStr, -(activeFilter - 1));
+
+      matching = (reviews || []).filter((r) => {
+        const tsMs = parseReviewTimestampMs(r?.review_created_at);
+        if (tsMs === null) return false;
+        const revDateStr = toCalendarDateString(new Date(tsMs), configuredTimezone);
+        return revDateStr >= startDateStr && revDateStr <= endDateStr;
+      });
+    }
+
+    const totalCount = matching.length;
+    const positiveCount = matching.filter((r) => r.star_rating >= 3 && r.star_rating <= 5).length;
+    const negativeCount = matching.filter((r) => r.star_rating === 1 || r.star_rating === 2).length;
+    const publishedCount = matching.filter((r) => r.publishing_status === 'published').length;
+    const failedCount = matching.filter(
+      (r) => r.publishing_status === 'failed' || r.publishing_status === 'template_error'
+    ).length;
+    const pendingCount = matching.filter((r) => {
+      const st = (r.publishing_status || r.processing_status || '').toLowerCase();
+      return st === 'pending' || st === 'verification_pending';
+    }).length;
+    const ratingSum = matching.reduce((acc, r) => acc + (Number(r.star_rating) || 0), 0);
+    const avgRating = totalCount > 0 ? Math.round((ratingSum / totalCount) * 100) / 100 : 0.0;
+    const distribution = { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
+    for (const r of matching) {
+      if (r.star_rating >= 1 && r.star_rating <= 5) {
+        distribution[r.star_rating] += 1;
+      }
+    }
+
+    return {
+      periodReviews: matching,
+      derivedStats: {
+        totalReviews: totalCount,
+        positiveReviewsCount: positiveCount,
+        negativeReviewsCount: negativeCount,
+        publishedRepliesCount: publishedCount,
+        failedRepliesCount: failedCount,
+        pendingReviewsCount: pendingCount,
+        avgRating,
+        distribution,
+      },
+    };
+  }, [reviews, activeFilter, configuredTimezone, summary?.period_days, summary?.period_start_date, summary?.period_end_date]);
 
   const posTemplateObj = templates?.find((t) => t.category === 'positive');
   const negTemplateObj = templates?.find((t) => t.category === 'negative');
@@ -91,15 +340,36 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
     );
   }
 
-  const dist = summary?.star_rating_distribution || { 5: 0, 4: 0, 3: 0, 2: 0, 1: 0 };
-  const total = summary?.total_reviews || 0;
-  const posCount = summary?.positive_reviews_count || 0;
-  const posShare = total > 0 ? Math.round((posCount / total) * 100) : 0;
+  const expectedSummaryPeriod = activeFilter === 'all' ? null : activeFilter;
+  const hasMatchingBackendSummary =
+    Boolean(summary) &&
+    (summary.period_days ?? null) === expectedSummaryPeriod &&
+    (!hasUserSelectedPeriod || Boolean(onChangePeriod));
 
-  const pendingCount = (reviews || []).filter((r) => {
-    const st = (r.publishing_status || r.processing_status || '').toLowerCase();
-    return st === 'pending' || st === 'verification_pending';
-  }).length;
+  const dist = hasMatchingBackendSummary
+    ? (summary.star_rating_distribution || derivedStats.distribution)
+    : derivedStats.distribution;
+  const total = hasMatchingBackendSummary ? (summary.total_reviews ?? 0) : derivedStats.totalReviews;
+  const posCount = hasMatchingBackendSummary
+    ? (summary.positive_reviews_count ?? 0)
+    : derivedStats.positiveReviewsCount;
+  const negCount = hasMatchingBackendSummary
+    ? (summary.negative_reviews_count ?? 0)
+    : derivedStats.negativeReviewsCount;
+  const publishedCount = hasMatchingBackendSummary
+    ? (summary.total_published_replies ?? 0)
+    : derivedStats.publishedRepliesCount;
+  const failedCount = hasMatchingBackendSummary
+    ? (summary.failed_publishing_attempts ?? 0)
+    : derivedStats.failedRepliesCount;
+  const avgRating = hasMatchingBackendSummary
+    ? (summary.average_star_rating ?? 0.0)
+    : derivedStats.avgRating;
+  const pendingCount =
+    hasMatchingBackendSummary && summary.pending_reviews_count != null
+      ? summary.pending_reviews_count
+      : derivedStats.pendingReviewsCount;
+  const posShare = total > 0 ? Math.round((posCount / total) * 100) : 0;
 
   const getEffectiveTime = (r) => {
     const pubTime = r.reply_published_at ? new Date(r.reply_published_at).getTime() : 0;
@@ -111,7 +381,7 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
     return Math.max(pubTime, revTime);
   };
 
-  const filteredRecent = (reviews || [])
+  const filteredRecent = periodReviews
     .filter((r) => {
       if (recentFilter === 'positive') return r.star_rating >= 3;
       if (recentFilter === 'negative') return r.star_rating <= 2;
@@ -121,7 +391,7 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
 
   return (
     <div className="space-y-7 page-enter">
-      {/* Page Title & Quick Actions */}
+      {/* Page Title & Compact Date-Range Filter */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="font-heading text-2xl font-bold text-[#1a1a2e] tracking-tight">
@@ -132,23 +402,92 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div
+          className="flex flex-nowrap items-center gap-2 self-start sm:self-auto shrink-0"
+          role="group"
+          aria-label="Filter dashboard data by date range"
+        >
           <button
             type="button"
-            onClick={() => onNavigate('reviews', { category: 'all', rating: 'all', status: 'all' })}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-[#e2e8f0] hover:border-[#b9d7ef] rounded-xl text-xs font-semibold text-[#1a1a2e] hover:bg-[#e8f1f8] shadow-tz-card transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40"
+            aria-pressed={isAllTimeActive}
+            onClick={handleSelectAllTime}
+            className={`whitespace-nowrap px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 ${
+              isAllTimeActive
+                ? 'bg-[#025091] border-[#025091] text-white shadow-sm'
+                : 'bg-white border-[#e2e8f0] text-[#1a1a2e] hover:border-[#b9d7ef] hover:bg-[#e8f1f8] shadow-tz-card'
+            }`}
           >
-            <MessageSquare size={14} className="text-[#025091]" />
-            <span>Manage All Reviews</span>
+            All Time
           </button>
-          <button
-            type="button"
-            onClick={() => onNavigate('templates')}
-            className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-[#025091] hover:bg-[#023e73] text-white rounded-xl text-xs font-semibold shadow-sm transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40"
+
+          <div
+            ref={dropdownRef}
+            className="relative inline-block"
+            onKeyDown={handleDropdownKeyDown}
           >
-            <span>Edit Templates</span>
-            <ArrowRight size={14} />
-          </button>
+            <button
+              ref={dropdownButtonRef}
+              type="button"
+              aria-haspopup="listbox"
+              aria-expanded={isDropdownMounted && !isDropdownClosing}
+              aria-label="Select date range"
+              onClick={() =>
+                isDropdownMounted && !isDropdownClosing ? closeDropdown(false) : openDropdown()
+              }
+              className={`whitespace-nowrap inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40 ${
+                !isAllTimeActive
+                  ? 'bg-[#025091] border-[#025091] text-white shadow-sm'
+                  : 'bg-white border-[#e2e8f0] text-[#1a1a2e] hover:border-[#b9d7ef] hover:bg-[#e8f1f8] shadow-tz-card'
+              } ${
+                isDropdownMounted && !isDropdownClosing && isAllTimeActive
+                  ? 'border-[#025091] ring-2 ring-[#025091]/20'
+                  : ''
+              }`}
+            >
+              <span>{displayedRangeLabel}</span>
+              <ChevronDown
+                size={13}
+                className={`shrink-0 transition-transform duration-150 ${
+                  isDropdownMounted && !isDropdownClosing ? 'rotate-180' : ''
+                } ${!isAllTimeActive ? 'text-white/90' : 'text-slate-500'}`}
+              />
+            </button>
+
+            {isDropdownMounted && (
+              <div
+                role="listbox"
+                aria-label="Date range options"
+                className={`absolute right-0 z-40 mt-1.5 w-40 bg-white rounded-xl border border-[#e2e8f0] shadow-xl p-1 ${
+                  isDropdownClosing ? 'dropdown-exit' : 'dropdown-enter'
+                }`}
+              >
+                {DATE_RANGE_OPTIONS.map((opt, idx) => {
+                  const isSelected = activeFilter === opt.value;
+                  const isHighlighted = highlightedIdx === idx;
+                  return (
+                    <button
+                      key={opt.value}
+                      type="button"
+                      role="option"
+                      aria-selected={isSelected}
+                      onMouseEnter={() => setHighlightedIdx(idx)}
+                      onClick={() => handleSelectRange(opt.value)}
+                      className={`w-full flex items-center justify-between gap-2 px-3 py-2 text-xs text-left rounded-lg transition-colors duration-150 ${
+                        isSelected
+                          ? 'bg-[#e8f1f8] text-[#025091] font-bold'
+                          : isHighlighted
+                          ? 'bg-slate-100 text-[#1a1a2e] font-medium'
+                          : 'text-[#1a1a2e] hover:bg-slate-50 font-medium'
+                      }`}
+                    >
+                      <span>{opt.label}</span>
+                      {isSelected && <Check size={13} className="text-[#025091] shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -156,7 +495,7 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6 gap-4 items-stretch">
         <StatCard
           title="Total Reviews"
-          value={summary?.total_reviews ?? 0}
+          value={total}
           subtitle="Google Business"
           icon={MessageSquare}
           color="blue"
@@ -172,7 +511,7 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
         />
         <StatCard
           title="Negative (1–2★)"
-          value={summary?.negative_reviews_count ?? 0}
+          value={negCount}
           subtitle="Apology template"
           icon={ThumbsDown}
           color="rose"
@@ -180,7 +519,7 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
         />
         <StatCard
           title="Published Replies"
-          value={summary?.total_published_replies ?? 0}
+          value={publishedCount}
           subtitle="Verified on Google"
           icon={CheckCircle}
           color="emerald"
@@ -188,7 +527,7 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
         />
         <StatCard
           title="Failed Replies"
-          value={summary?.failed_publishing_attempts ?? 0}
+          value={failedCount}
           subtitle={pendingCount > 0 ? `${pendingCount} pending in queue` : 'No delivery errors'}
           icon={AlertTriangle}
           color="amber"
@@ -196,13 +535,13 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
             onNavigate('reviews', {
               category: 'all',
               rating: 'all',
-              status: (summary?.failed_publishing_attempts ?? 0) > 0 ? 'failed' : 'pending',
+              status: failedCount > 0 ? 'failed' : 'pending',
             })
           }
         />
         <StatCard
           title="Average Rating"
-          value={`${summary?.average_star_rating ?? 0.0} ★`}
+          value={`${avgRating} ★`}
           subtitle={`${posShare}% positive mix`}
           icon={Star}
           color="navy"
@@ -506,7 +845,9 @@ export default function Overview({ summary, reviews, templates, isLoading, onNav
           {filteredRecent.length === 0 ? (
             <div className="p-10 text-center space-y-2">
               <p className="text-[#64748b] text-sm font-medium">
-                No recent reviews match the selected filter.
+                {periodReviews.length === 0 && !isAllTimeActive
+                  ? `No reviews found in the last ${activeFilter} days.`
+                  : 'No recent reviews match the selected filter.'}
               </p>
               {recentFilter !== 'all' && (
                 <button
