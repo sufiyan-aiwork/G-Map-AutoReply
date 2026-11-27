@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   Search,
@@ -22,6 +22,7 @@ import SelectMenu from '../components/SelectMenu';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { TableSkeleton } from '../components/SkeletonLoader';
 import { api } from '../services/api';
+import { getReviewEffectiveTime, formatSafeDate, formatSafeDateTime } from '../utils/dateUtils';
 
 const DEFAULT_POSITIVE =
   'Thank you for sharing your valuable feedback with Techzone Academy! We are happy to have you as part of our learning community. We truly appreciate your support!';
@@ -69,11 +70,18 @@ export default function Reviews({
 
   const [selectedReview, setSelectedReview] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
+  const copyTimerRef = useRef(null);
 
   const [isPublishingSingle, setIsPublishingSingle] = useState(false);
   const [showPublishConfirm, setShowPublishConfirm] = useState(false);
   const [publishSuccessMsg, setPublishSuccessMsg] = useState(null);
   const [publishErrorMsg, setPublishErrorMsg] = useState(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (initialFilter) {
@@ -116,10 +124,16 @@ export default function Reviews({
     setPublishErrorMsg(null);
   };
 
-  const handleCopyReply = (text, id) => {
-    navigator.clipboard?.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2200);
+  const handleCopyReply = async (text, id) => {
+    if (!text) return;
+    try {
+      await navigator.clipboard?.writeText(text);
+      setCopiedId(id);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedId(null), 2200);
+    } catch {
+      // Clipboard write unavailable in non-secure context
+    }
   };
 
   const handleResetFilters = () => {
@@ -175,16 +189,6 @@ export default function Reviews({
   const isFiltered =
     ratingFilter !== 'all' || statusFilter !== 'all' || categoryFilter !== 'all' || searchQuery.trim() !== '';
 
-  const getEffectiveTime = (r) => {
-    const pubTime = r.reply_published_at ? new Date(r.reply_published_at).getTime() : 0;
-    const revTime = r.review_created_at
-      ? new Date(r.review_created_at).getTime()
-      : r.created_at
-      ? new Date(r.created_at).getTime()
-      : 0;
-    return Math.max(pubTime, revTime);
-  };
-
   const filteredReviews = (reviews || [])
     .filter((r) => {
       if (ratingFilter !== 'all' && r.star_rating !== parseInt(ratingFilter, 10)) {
@@ -195,7 +199,11 @@ export default function Reviews({
 
       if (statusFilter !== 'all') {
         const st = (r.publishing_status || r.processing_status || '').toLowerCase();
-        if (st !== statusFilter) return false;
+        if (statusFilter === 'failed') {
+          if (st !== 'failed' && st !== 'template_error') return false;
+        } else if (st !== statusFilter) {
+          return false;
+        }
       }
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
@@ -206,7 +214,7 @@ export default function Reviews({
       }
       return true;
     })
-    .sort((a, b) => getEffectiveTime(b) - getEffectiveTime(a));
+    .sort((a, b) => getReviewEffectiveTime(b) - getReviewEffectiveTime(a));
 
   const totalCount = (reviews || []).length;
   const posCount = (reviews || []).filter((r) => r.star_rating >= 3).length;
@@ -415,9 +423,9 @@ export default function Reviews({
                       const replyText =
                         rev.matched_reply || (rev.star_rating >= 3 ? positiveTemplate : negativeTemplate);
                       const hasComment = Boolean(rev.review_text && rev.review_text.trim());
-                      const formattedDate = new Date(
+                      const formattedDate = formatSafeDate(
                         rev.reply_published_at || rev.review_created_at || rev.created_at
-                      ).toLocaleDateString();
+                      );
 
                       return (
                         <tr
@@ -526,9 +534,9 @@ export default function Reviews({
                 {paginatedReviews.map((rev) => {
                   const replyText =
                     rev.matched_reply || (rev.star_rating >= 3 ? positiveTemplate : negativeTemplate);
-                  const formattedDate = new Date(
+                  const formattedDate = formatSafeDate(
                     rev.reply_published_at || rev.review_created_at || rev.created_at
-                  ).toLocaleDateString();
+                  );
 
                   return (
                     <div
@@ -746,7 +754,7 @@ export default function Reviews({
                         </span>
                         {selectedReview.reply_published_at && (
                           <span className="text-[11px] text-emerald-700 tabular-nums">
-                            {new Date(selectedReview.reply_published_at).toLocaleString()}
+                            {formatSafeDateTime(selectedReview.reply_published_at)}
                           </span>
                         )}
                       </div>
@@ -857,7 +865,7 @@ export default function Reviews({
                   <div className="min-w-0">
                     <span className="font-semibold text-[#1a1a2e]">Review Date:</span>
                     <div className="mt-0.5 tabular-nums">
-                      {new Date(selectedReview.review_created_at || selectedReview.created_at).toLocaleString()}
+                      {formatSafeDateTime(selectedReview.review_created_at || selectedReview.created_at)}
                     </div>
                   </div>
                 </div>

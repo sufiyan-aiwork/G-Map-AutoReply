@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import {
   History,
@@ -20,6 +20,7 @@ import {
 import StatusBadge from '../components/StatusBadge';
 import SelectMenu from '../components/SelectMenu';
 import { TableSkeleton } from '../components/SkeletonLoader';
+import { formatSafeDateTime, formatSafeIsoString } from '../utils/dateUtils';
 
 const PAGE_SIZE = 25;
 
@@ -49,6 +50,13 @@ export default function ActivityLogs({ logs, isLoading, onRefresh, isRefreshing 
   const [selectedLog, setSelectedLog] = useState(null);
   const [copiedId, setCopiedId] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
+  const copyTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (!autoRefresh) return undefined;
@@ -106,11 +114,12 @@ export default function ActivityLogs({ logs, isLoading, onRefresh, isRefreshing 
 
   const handleCopyDescription = async (log) => {
     if (!log) return;
-    const text = `[${new Date(log.created_at).toISOString()}] (${log.status?.toUpperCase() || 'INFO'}) ${log.event_type}: ${log.description || ''}`;
+    const text = `[${formatSafeIsoString(log.created_at)}] (${log.status?.toUpperCase() || 'INFO'}) ${log.event_type}: ${log.description || ''}`;
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard?.writeText(text);
       setCopiedId(log.id);
-      setTimeout(() => setCopiedId(null), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedId(null), 2000);
     } catch {
       // Clipboard write unavailable in non-secure context
     }
@@ -307,7 +316,7 @@ export default function ActivityLogs({ logs, isLoading, onRefresh, isRefreshing 
                       className="hover:bg-[#eff6fb]/65 focus-visible:bg-[#eff6fb] focus-visible:outline-none transition-colors duration-150 cursor-pointer group"
                     >
                       <td className="py-3 px-4 text-[#64748b] font-mono whitespace-nowrap tabular-nums">
-                        {new Date(log.created_at).toLocaleString()}
+                        {formatSafeDateTime(log.created_at)}
                       </td>
                       <td className="py-3 px-4 font-semibold text-[#1a1a2e] font-mono whitespace-nowrap">
                         <span className="bg-[#f1f5f9] text-[#1a1a2e] px-2 py-0.5 rounded-md border border-[#e2e8f0]">
@@ -393,7 +402,7 @@ export default function ActivityLogs({ logs, isLoading, onRefresh, isRefreshing 
                       Audit Log Details
                     </h2>
                     <p className="text-xs text-[#64748b] tabular-nums mt-0.5 truncate">
-                      {new Date(selectedLog.created_at).toLocaleString()}
+                      {formatSafeDateTime(selectedLog.created_at)}
                     </p>
                   </div>
                 </div>

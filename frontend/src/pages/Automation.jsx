@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Play,
   Pause,
@@ -20,16 +20,34 @@ export default function Automation({
   onToggleAutomation,
   onUpdateSettings
 }) {
-  const savedInterval = automationStatus?.polling_interval_minutes ?? 15;
+  const savedInterval = Number(automationStatus?.polling_interval_minutes) || 15;
   const [pollingInterval, setPollingInterval] = useState(savedInterval);
   const [isSaving, setIsSaving] = useState(false);
   const [saveMessage, setSaveMessage] = useState(null);
 
+  const parsedSelected = Number.isFinite(parseInt(pollingInterval, 10))
+    ? parseInt(pollingInterval, 10)
+    : savedInterval;
+  const isDirty = parsedSelected !== savedInterval;
+
+  const isDirtyRef = useRef(false);
+  const saveMsgTimerRef = useRef(null);
+
   useEffect(() => {
-    if (automationStatus?.polling_interval_minutes) {
-      setPollingInterval(automationStatus.polling_interval_minutes);
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  useEffect(() => {
+    return () => {
+      if (saveMsgTimerRef.current) clearTimeout(saveMsgTimerRef.current);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (automationStatus?.polling_interval_minutes != null && !isDirtyRef.current) {
+      setPollingInterval(Number(automationStatus.polling_interval_minutes) || 15);
     }
-  }, [automationStatus]);
+  }, [automationStatus?.polling_interval_minutes]);
 
   if (isLoading && !automationStatus) {
     return (
@@ -41,24 +59,24 @@ export default function Automation({
     );
   }
 
-  const parsedSelected = parseInt(pollingInterval, 10);
-  const isDirty = parsedSelected !== savedInterval;
   const isEnabled = automationStatus?.auto_reply_enabled ?? true;
 
   const handleSaveSettings = async (e) => {
     e.preventDefault();
-    if (!isDirty) return;
+    if (!isDirty || !Number.isFinite(parsedSelected) || parsedSelected < 1) return;
     setIsSaving(true);
     setSaveMessage(null);
     try {
       await onUpdateSettings({
         polling_interval: parsedSelected,
       });
+      isDirtyRef.current = false;
       setSaveMessage({
         type: 'success',
         text: `Automation polling interval updated to every ${parsedSelected} minutes.`,
       });
-      setTimeout(() => setSaveMessage(null), 5000);
+      if (saveMsgTimerRef.current) clearTimeout(saveMsgTimerRef.current);
+      saveMsgTimerRef.current = setTimeout(() => setSaveMessage(null), 5000);
     } catch (err) {
       setSaveMessage({
         type: 'error',

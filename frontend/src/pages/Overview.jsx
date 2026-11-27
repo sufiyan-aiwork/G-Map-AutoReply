@@ -18,6 +18,13 @@ import StatCard from '../components/StatCard';
 import StarRating from '../components/StarRating';
 import StatusBadge from '../components/StatusBadge';
 import { KpiGridSkeleton, CardSkeleton } from '../components/SkeletonLoader';
+import {
+  parseTimestampMs,
+  getReviewEffectiveTime,
+  formatSafeDate,
+  toCalendarDateString,
+  shiftCalendarDateString,
+} from '../utils/dateUtils';
 
 const DATE_RANGE_OPTIONS = [
   { value: 7, label: 'Last 7 Days' },
@@ -39,59 +46,6 @@ const SAMPLE_PRESETS = [
   { rating: 2, text: 'Had some delays getting lab server access during project week.' },
   { rating: 1, text: 'Class schedule was changed without early communication. Disappointed.' },
 ];
-
-function parseReviewTimestampMs(rawValue) {
-  if (!rawValue) return null;
-  if (rawValue instanceof Date) {
-    const ms = rawValue.getTime();
-    return Number.isNaN(ms) ? null : ms;
-  }
-  if (typeof rawValue !== 'string') return null;
-  const trimmed = rawValue.trim();
-  if (!trimmed) return null;
-  const hasTzInfo = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
-  const normalized = hasTzInfo ? trimmed : `${trimmed}Z`;
-  const ms = Date.parse(normalized);
-  return Number.isNaN(ms) ? null : ms;
-}
-
-function toCalendarDateString(dateObj, timeZone) {
-  try {
-    const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: timeZone || 'Asia/Kolkata',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-    }).formatToParts(dateObj);
-    const y = parts.find((p) => p.type === 'year')?.value;
-    const m = parts.find((p) => p.type === 'month')?.value;
-    const d = parts.find((p) => p.type === 'day')?.value;
-    if (y && m && d) return `${y}-${m}-${d}`;
-  } catch {
-    // Fallback for fixed-offset strings such as +05:30
-  }
-
-  const offsetMatch = /^(?:UTC)?([+-])(\d{2}):?(\d{2})$/i.exec((timeZone || '').trim());
-  if (offsetMatch) {
-    const sign = offsetMatch[1] === '+' ? 1 : -1;
-    const offsetMinutes = sign * (parseInt(offsetMatch[2], 10) * 60 + parseInt(offsetMatch[3], 10));
-    const shifted = new Date(dateObj.getTime() + offsetMinutes * 60000);
-    return shifted.toISOString().slice(0, 10);
-  }
-
-  if ((timeZone || '').trim().toUpperCase() === 'UTC') {
-    return dateObj.toISOString().slice(0, 10);
-  }
-
-  const istFallback = new Date(dateObj.getTime() + 330 * 60000);
-  return istFallback.toISOString().slice(0, 10);
-}
-
-function shiftCalendarDateString(ymd, deltaDays) {
-  const [y, m, d] = ymd.split('-').map(Number);
-  const shifted = new Date(Date.UTC(y, m - 1, d + deltaDays));
-  return shifted.toISOString().slice(0, 10);
-}
 
 export default function Overview({
   summary,
@@ -205,7 +159,11 @@ export default function Overview({
       return;
     }
 
-    if (e.key === 'ArrowDown') {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      closeDropdown(true);
+    } else if (e.key === 'ArrowDown') {
       e.preventDefault();
       setHighlightedIdx((prev) => (prev + 1) % DATE_RANGE_OPTIONS.length);
     } else if (e.key === 'ArrowUp') {
@@ -244,7 +202,7 @@ export default function Overview({
         : shiftCalendarDateString(endDateStr, -(activeFilter - 1));
 
       matching = (reviews || []).filter((r) => {
-        const tsMs = parseReviewTimestampMs(r?.review_created_at);
+        const tsMs = parseTimestampMs(r?.review_created_at);
         if (tsMs === null) return false;
         const revDateStr = toCalendarDateString(new Date(tsMs), configuredTimezone);
         return revDateStr >= startDateStr && revDateStr <= endDateStr;
@@ -371,23 +329,13 @@ export default function Overview({
       : derivedStats.pendingReviewsCount;
   const posShare = total > 0 ? Math.round((posCount / total) * 100) : 0;
 
-  const getEffectiveTime = (r) => {
-    const pubTime = r.reply_published_at ? new Date(r.reply_published_at).getTime() : 0;
-    const revTime = r.review_created_at
-      ? new Date(r.review_created_at).getTime()
-      : r.created_at
-      ? new Date(r.created_at).getTime()
-      : 0;
-    return Math.max(pubTime, revTime);
-  };
-
   const filteredRecent = periodReviews
     .filter((r) => {
       if (recentFilter === 'positive') return r.star_rating >= 3;
       if (recentFilter === 'negative') return r.star_rating <= 2;
       return true;
     })
-    .sort((a, b) => getEffectiveTime(b) - getEffectiveTime(a));
+    .sort((a, b) => getReviewEffectiveTime(b) - getReviewEffectiveTime(a));
 
   return (
     <div className="space-y-7 page-enter">
@@ -870,7 +818,7 @@ export default function Overview({
                       </span>
                       <StarRating rating={rev.star_rating} size={15} />
                       <span className="text-xs text-[#64748b] tabular-nums">
-                        {new Date(rev.reply_published_at || rev.review_created_at || rev.created_at).toLocaleDateString()}
+                        {formatSafeDate(rev.reply_published_at || rev.review_created_at || rev.created_at)}
                       </span>
                     </div>
                     {rev.review_text && rev.review_text.trim() ? (

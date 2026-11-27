@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Save,
   CheckCircle,
@@ -38,25 +38,49 @@ export default function Templates({ templates, isLoading, onUpdateTemplate }) {
   const [copiedCategory, setCopiedCategory] = useState(null);
   const [pendingConfirm, setPendingConfirm] = useState(null);
 
+  const isPosDirtyRef = useRef(false);
+  const isNegDirtyRef = useRef(false);
+  const statusTimerRef = useRef(null);
+  const copyTimerRef = useRef(null);
+
+  const isPosDirty = positiveText !== savedPositive.text || positiveActive !== savedPositive.active;
+  const isNegDirty = negativeText !== savedNegative.text || negativeActive !== savedNegative.active;
+
+  useEffect(() => {
+    isPosDirtyRef.current = isPosDirty;
+  }, [isPosDirty]);
+
+  useEffect(() => {
+    isNegDirtyRef.current = isNegDirty;
+  }, [isNegDirty]);
+
+  useEffect(() => {
+    return () => {
+      if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     if (templates && templates.length > 0) {
       const pos = templates.find((t) => t.category === 'positive');
       if (pos) {
-        setPositiveText(pos.reply_text);
-        setPositiveActive(pos.is_active);
+        if (!isPosDirtyRef.current) {
+          setPositiveText(pos.reply_text);
+          setPositiveActive(pos.is_active);
+        }
         setSavedPositive({ text: pos.reply_text, active: pos.is_active });
       }
       const neg = templates.find((t) => t.category === 'negative');
       if (neg) {
-        setNegativeText(neg.reply_text);
-        setNegativeActive(neg.is_active);
+        if (!isNegDirtyRef.current) {
+          setNegativeText(neg.reply_text);
+          setNegativeActive(neg.is_active);
+        }
         setSavedNegative({ text: neg.reply_text, active: neg.is_active });
       }
     }
   }, [templates]);
-
-  const isPosDirty = positiveText !== savedPositive.text || positiveActive !== savedPositive.active;
-  const isNegDirty = negativeText !== savedNegative.text || negativeActive !== savedNegative.active;
 
   const executeSave = async (category) => {
     setSavingCategory(category);
@@ -72,11 +96,20 @@ export default function Templates({ templates, isLoading, onUpdateTemplate }) {
         is_active: active,
       });
 
+      if (isPos) {
+        isPosDirtyRef.current = false;
+        setSavedPositive({ text, active });
+      } else {
+        isNegDirtyRef.current = false;
+        setSavedNegative({ text, active });
+      }
+
       setStatusMessage({
         type: 'success',
         text: `Saved ${category.toUpperCase()} reply template to Supabase.`,
       });
-      setTimeout(() => setStatusMessage(null), 4500);
+      if (statusTimerRef.current) clearTimeout(statusTimerRef.current);
+      statusTimerRef.current = setTimeout(() => setStatusMessage(null), 4500);
     } catch (err) {
       setStatusMessage({
         type: 'error',
@@ -136,10 +169,16 @@ export default function Templates({ templates, isLoading, onUpdateTemplate }) {
     }
   };
 
-  const handleCopy = (text, category) => {
-    navigator.clipboard?.writeText(text);
-    setCopiedCategory(category);
-    setTimeout(() => setCopiedCategory(null), 2000);
+  const handleCopy = async (text, category) => {
+    if (!text) return;
+    try {
+      await navigator.clipboard?.writeText(text);
+      setCopiedCategory(category);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedCategory(null), 2000);
+    } catch {
+      // Clipboard write unavailable in non-secure context
+    }
   };
 
   const getPreviewReply = () => {

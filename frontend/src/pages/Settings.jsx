@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Globe2,
   ShieldCheck,
@@ -23,6 +23,7 @@ import StatusBadge from '../components/StatusBadge';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { CardSkeleton } from '../components/SkeletonLoader';
 import { api } from '../services/api';
+import { formatSafeTimeAndDate } from '../utils/dateUtils';
 
 export default function Settings({
   automationStatus,
@@ -34,16 +35,37 @@ export default function Settings({
   // Google Business Profile state
   const [googleInfo, setGoogleInfo] = useState(null);
   const [isLoadingGoogle, setIsLoadingGoogle] = useState(true);
+  const [isConnectingGoogle, setIsConnectingGoogle] = useState(false);
   const [googleActionMsg, setGoogleActionMsg] = useState(null);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
   const [copiedField, setCopiedField] = useState(null);
 
   // Review Synchronization / Polling Frequency state
-  const savedInterval = automationStatus?.polling_interval_minutes ?? 15;
+  const savedInterval = Number(automationStatus?.polling_interval_minutes) || 15;
   const [pollingInterval, setPollingInterval] = useState(savedInterval);
   const [isSavingPolling, setIsSavingPolling] = useState(false);
   const [pollingSaveMsg, setPollingSaveMsg] = useState(null);
+
+  const parsedSelected = Number.isFinite(parseInt(pollingInterval, 10))
+    ? parseInt(pollingInterval, 10)
+    : savedInterval;
+  const isDirty = parsedSelected !== savedInterval;
+
+  const isDirtyRef = useRef(false);
+  const copyTimerRef = useRef(null);
+  const pollingMsgTimerRef = useRef(null);
+
+  useEffect(() => {
+    isDirtyRef.current = isDirty;
+  }, [isDirty]);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      if (pollingMsgTimerRef.current) clearTimeout(pollingMsgTimerRef.current);
+    };
+  }, []);
 
   const fetchGoogleStatus = async () => {
     setIsLoadingGoogle(true);
@@ -52,6 +74,10 @@ export default function Settings({
       setGoogleInfo(data);
     } catch (err) {
       console.error('Error fetching Google status:', err);
+      setGoogleActionMsg({
+        type: 'error',
+        text: `Failed to verify Google Business Profile status: ${err.message || 'Backend error'}`,
+      });
     } finally {
       setIsLoadingGoogle(false);
     }
@@ -62,23 +88,28 @@ export default function Settings({
   }, []);
 
   useEffect(() => {
-    if (automationStatus?.polling_interval_minutes) {
-      setPollingInterval(automationStatus.polling_interval_minutes);
+    if (automationStatus?.polling_interval_minutes != null && !isDirtyRef.current) {
+      setPollingInterval(Number(automationStatus.polling_interval_minutes) || 15);
     }
-  }, [automationStatus]);
+  }, [automationStatus?.polling_interval_minutes]);
 
   const handleConnectGoogle = async () => {
+    if (isConnectingGoogle) return;
+    setIsConnectingGoogle(true);
     setGoogleActionMsg(null);
     try {
-      const { auth_url } = await api.getGoogleAuthUrl();
-      if (auth_url) {
-        window.location.href = auth_url;
+      const res = await api.getGoogleAuthUrl();
+      const authUrl = res?.auth_url;
+      if (!authUrl || !/^https?:\/\//i.test(authUrl)) {
+        throw new Error('Backend did not return a valid Google authorization URL.');
       }
+      window.location.href = authUrl;
     } catch (err) {
       setGoogleActionMsg({
         type: 'error',
         text: `Failed to initiate Google authorization: ${err.message}`,
       });
+      setIsConnectingGoogle(false);
     }
   };
 
@@ -112,31 +143,31 @@ export default function Settings({
   const handleCopyId = async (field, value) => {
     if (!value) return;
     try {
-      await navigator.clipboard.writeText(value);
+      await navigator.clipboard?.writeText(value);
       setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedField(null), 2000);
     } catch {
       // Clipboard write unavailable in non-secure context
     }
   };
 
-  const parsedSelected = parseInt(pollingInterval, 10);
-  const isDirty = parsedSelected !== savedInterval;
-
   const handleSavePolling = async (e) => {
     e.preventDefault();
-    if (!isDirty || !onUpdateSettings) return;
+    if (!isDirty || !onUpdateSettings || !Number.isFinite(parsedSelected) || parsedSelected < 1) return;
     setIsSavingPolling(true);
     setPollingSaveMsg(null);
     try {
       await onUpdateSettings({
         polling_interval: parsedSelected,
       });
+      isDirtyRef.current = false;
       setPollingSaveMsg({
         type: 'success',
         text: `Review polling interval updated to every ${parsedSelected} minutes.`,
       });
-      setTimeout(() => setPollingSaveMsg(null), 5000);
+      if (pollingMsgTimerRef.current) clearTimeout(pollingMsgTimerRef.current);
+      pollingMsgTimerRef.current = setTimeout(() => setPollingSaveMsg(null), 5000);
     } catch (err) {
       setPollingSaveMsg({
         type: 'error',
@@ -261,10 +292,11 @@ export default function Settings({
                     <button
                       type="button"
                       onClick={handleConnectGoogle}
-                      className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-[#eff6fb] border border-[#b9d7ef] hover:bg-[#d7e5f3] text-[#025091] rounded-xl text-xs font-semibold transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40"
+                      disabled={isConnectingGoogle}
+                      className="inline-flex items-center gap-1.5 px-3.5 py-2.5 bg-[#eff6fb] border border-[#b9d7ef] hover:bg-[#d7e5f3] text-[#025091] rounded-xl text-xs font-semibold transition-all duration-150 active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40"
                     >
                       <ExternalLink size={14} />
-                      <span>Reconnect</span>
+                      <span>{isConnectingGoogle ? 'Redirecting...' : 'Reconnect'}</span>
                     </button>
                     <button
                       type="button"
@@ -280,10 +312,11 @@ export default function Settings({
                   <button
                     type="button"
                     onClick={handleConnectGoogle}
-                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#025091] hover:bg-[#023e73] text-white rounded-xl text-xs font-bold shadow-sm transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40"
+                    disabled={isConnectingGoogle}
+                    className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#025091] hover:bg-[#023e73] text-white rounded-xl text-xs font-bold shadow-sm transition-all duration-150 active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40"
                   >
                     <ExternalLink size={14} />
-                    <span>Connect Google Account</span>
+                    <span>{isConnectingGoogle ? 'Redirecting...' : 'Connect Google Account'}</span>
                   </button>
                 )}
               </div>
@@ -379,9 +412,7 @@ export default function Settings({
                     Last Synchronized
                   </span>
                   <p className="text-xs font-bold text-[#1a1a2e] mt-0.5 tabular-nums">
-                    {googleInfo?.last_synced_at
-                      ? `${new Date(googleInfo.last_synced_at).toLocaleTimeString()} · ${new Date(googleInfo.last_synced_at).toLocaleDateString()}`
-                      : 'Pending first sync'}
+                    {formatSafeTimeAndDate(googleInfo?.last_synced_at, 'Pending first sync')}
                   </p>
                 </div>
               </div>

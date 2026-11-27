@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Globe2,
   ShieldCheck,
@@ -19,14 +19,23 @@ import StatusBadge from '../components/StatusBadge';
 import ConfirmDialog from '../components/ConfirmDialog';
 import { CardSkeleton } from '../components/SkeletonLoader';
 import { api } from '../services/api';
+import { formatSafeTimeAndDate } from '../utils/dateUtils';
 
 export default function GoogleSettings({ onSyncReviews, isSyncing }) {
   const [googleInfo, setGoogleInfo] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isConnecting, setIsConnecting] = useState(false);
   const [actionMessage, setActionMessage] = useState(null);
   const [isDisconnecting, setIsDisconnecting] = useState(false);
   const [showDisconnectConfirm, setShowDisconnectConfirm] = useState(false);
   const [copiedField, setCopiedField] = useState(null);
+  const copyTimerRef = useRef(null);
+
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+    };
+  }, []);
 
   const fetchGoogleStatus = async () => {
     setIsLoading(true);
@@ -35,6 +44,10 @@ export default function GoogleSettings({ onSyncReviews, isSyncing }) {
       setGoogleInfo(data);
     } catch (err) {
       console.error('Error fetching Google status:', err);
+      setActionMessage({
+        type: 'error',
+        text: `Failed to fetch Google Business Profile status: ${err.message || 'Backend error'}`,
+      });
     } finally {
       setIsLoading(false);
     }
@@ -45,16 +58,22 @@ export default function GoogleSettings({ onSyncReviews, isSyncing }) {
   }, []);
 
   const handleConnectGoogle = async () => {
+    if (isConnecting) return;
+    setIsConnecting(true);
+    setActionMessage(null);
     try {
-      const { auth_url } = await api.getGoogleAuthUrl();
-      if (auth_url) {
-        window.location.href = auth_url;
+      const res = await api.getGoogleAuthUrl();
+      const authUrl = res?.auth_url;
+      if (!authUrl || !/^https?:\/\//i.test(authUrl)) {
+        throw new Error('Backend did not return a valid Google authorization URL.');
       }
+      window.location.href = authUrl;
     } catch (err) {
       setActionMessage({
         type: 'error',
         text: `Failed to initiate Google authorization: ${err.message}`,
       });
+      setIsConnecting(false);
     }
   };
 
@@ -88,9 +107,10 @@ export default function GoogleSettings({ onSyncReviews, isSyncing }) {
   const handleCopyId = async (field, value) => {
     if (!value) return;
     try {
-      await navigator.clipboard.writeText(value);
+      await navigator.clipboard?.writeText(value);
       setCopiedField(field);
-      setTimeout(() => setCopiedField(null), 2000);
+      if (copyTimerRef.current) clearTimeout(copyTimerRef.current);
+      copyTimerRef.current = setTimeout(() => setCopiedField(null), 2000);
     } catch {
       // Clipboard write unavailable in non-secure context
     }
@@ -135,11 +155,10 @@ export default function GoogleSettings({ onSyncReviews, isSyncing }) {
       {actionMessage && (
         <div
           role="status"
-          className={`p-4 rounded-2xl border flex items-center justify-between gap-3 text-sm font-medium shadow-tz-card toast-enter ${
-            actionMessage.type === 'success'
+          className={`p-4 rounded-2xl border flex items-center justify-between gap-3 text-sm font-medium shadow-tz-card toast-enter ${actionMessage.type === 'success'
               ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
               : 'bg-rose-50 border-rose-200 text-rose-900'
-          }`}
+            }`}
         >
           <div className="flex items-center gap-2.5">
             {actionMessage.type === 'success' ? (
@@ -167,11 +186,10 @@ export default function GoogleSettings({ onSyncReviews, isSyncing }) {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-6 border-b border-[#e2e8f0]">
             <div className="flex items-center gap-3.5">
               <div
-                className={`w-12 h-12 rounded-xl border flex items-center justify-center shrink-0 ${
-                  isConnected
+                className={`w-12 h-12 rounded-xl border flex items-center justify-center shrink-0 ${isConnected
                     ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
                     : 'bg-[#e8f1f8] text-[#025091] border-[#b9d7ef]'
-                }`}
+                  }`}
               >
                 <Globe2 size={24} />
               </div>
@@ -216,10 +234,11 @@ export default function GoogleSettings({ onSyncReviews, isSyncing }) {
                 <button
                   type="button"
                   onClick={handleConnectGoogle}
-                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#025091] hover:bg-[#023e73] text-white rounded-xl text-xs font-bold shadow-sm transition-all duration-150 active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40"
+                  disabled={isConnecting}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-[#025091] hover:bg-[#023e73] text-white rounded-xl text-xs font-bold shadow-sm transition-all duration-150 active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#025091]/40"
                 >
                   <ExternalLink size={14} />
-                  <span>Connect Google Account</span>
+                  <span>{isConnecting ? 'Redirecting...' : 'Connect Google Account'}</span>
                 </button>
               )}
             </div>
@@ -315,9 +334,7 @@ export default function GoogleSettings({ onSyncReviews, isSyncing }) {
                   Last Synchronized
                 </span>
                 <p className="text-xs font-bold text-[#1a1a2e] mt-0.5 tabular-nums">
-                  {googleInfo?.last_synced_at
-                    ? `${new Date(googleInfo.last_synced_at).toLocaleTimeString()} · ${new Date(googleInfo.last_synced_at).toLocaleDateString()}`
-                    : 'Pending first sync'}
+                  {formatSafeTimeAndDate(googleInfo?.last_synced_at, 'Pending first sync')}
                 </p>
               </div>
             </div>
